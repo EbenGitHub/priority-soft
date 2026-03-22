@@ -99,11 +99,16 @@ export default function SchedulingPage() {
   const attemptAssignment = async (targetStaff: Staff) => {
     if (!assignModalShift) return;
     
-    // Front-end Pre-Flight bounds check logic to deliver instant suggestions pane
     const result = validateAssignment(targetStaff, assignModalShift, shifts, staffList);
     if (!result.valid) {
       setValidationData(result);
       return;
+    }
+
+    let overrideReason = null;
+    if (result.requiresOverride) {
+       overrideReason = prompt('🚨 ' + result.warnings?.join(' | ') + '\n\nManager Override Authentication Required. Please specify execution reasoning to continue deployment:');
+       if (!overrideReason) return; // Manager cancelled execution sequence
     }
 
     try {
@@ -111,11 +116,12 @@ export default function SchedulingPage() {
       const res = await fetch(`${API_URL}/shifts/${assignModalShift.id}/assign`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: targetStaff.id })
+        body: JSON.stringify({ userId: targetStaff.id, overrideReason }) // Mock integration bridging sequence bounds
       });
       
       if (!res.ok) {
          const errData = await res.json();
+         // If Phase 5.2 backend forces override requirement strictly via 409...
          setValidationData({ valid: false, reason: errData.message || 'Database rejected assignment.' });
          return;
       }
@@ -164,6 +170,20 @@ export default function SchedulingPage() {
 
   if (locations.length === 0) return <div className="min-h-screen bg-slate-950 flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div></div>;
 
+  // Render Core Visualizations natively intercepting constraints dynamically across all active DB rows
+  const projectedLaborDash = staffList.map(staff => {
+      const pShifts = shifts.filter(s => s.assignedStaff?.id === staff.id);
+      const hours = pShifts.reduce((acc, s) => {
+          if (!s.startTime || !s.endTime) return acc;
+          const strt = new Date(`${s.date}T${s.startTime}`).getTime();
+          const nd = new Date(`${s.date}T${s.endTime}`).getTime();
+          return acc + ((nd - strt) / (1000 * 60 * 60));
+      }, 0);
+      const overtimeHours = Math.max(0, hours - 40);
+      const otCost = overtimeHours * 25.50 * 1.5; // Benchmark standard 1.5x Premium Rate
+      return { staff, hours, overtimeHours, otCost };
+  }).filter(d => d.hours > 0).sort((a,b) => b.hours - a.hours);
+
   return (
     <div className="max-w-7xl mx-auto animate-fade-in-up text-white font-sans">
       <header className="mb-8 flex flex-wrap justify-between items-center gap-4">
@@ -178,6 +198,40 @@ export default function SchedulingPage() {
           + Build Unassigned Shift Template
         </button>
       </header>
+      
+      {/* Overtime & Compliance Dashboard */}
+      {projectedLaborDash.length > 0 && (
+         <div className="bg-slate-800 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden p-8 mb-8 relative">
+            <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/5 blur-3xl rounded-full translate-x-1/2 -translate-y-1/2"></div>
+            <h3 className="text-2xl font-bold mb-6 flex items-center gap-3 relative z-10">
+               Projected Labor Cost Analytics
+               <span className="bg-amber-500/10 text-amber-500 text-[10px] font-bold tracking-widest uppercase border border-amber-500/20 px-3 py-1 rounded-md">Live Evaluation</span>
+            </h3>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-5 gap-4 relative z-10">
+               {projectedLaborDash.map(d => (
+                  <div key={d.staff.id} className={`p-5 rounded-[1.5rem] border hover:-translate-y-1 transition-transform shadow-lg ${d.overtimeHours > 0 ? 'bg-amber-950/40 border-amber-500/40' : d.hours >= 35 ? 'bg-blue-900/10 border-blue-500/30' : 'bg-slate-900 border-slate-700'}`}>
+                     <p className="font-bold mb-3 truncate">{d.staff.name}</p>
+                     <div className="flex justify-between items-end">
+                       <p className={`font-mono text-3xl font-extrabold ${d.overtimeHours > 0 ? 'text-amber-400' : d.hours >= 35 ? 'text-blue-400' : 'text-emerald-400'}`}>{d.hours.toFixed(1)}<span className="text-sm font-sans opacity-50 ml-1">hrs</span></p>
+                     </div>
+                     {d.overtimeHours > 0 && (
+                         <div className="mt-4 pt-4 border-t border-amber-500/20">
+                            <p className="text-[10px] font-bold tracking-widest uppercase text-amber-500/70 mb-1">Overtime Target Premium</p>
+                            <p className="text-sm text-red-400 font-mono font-bold">+${d.otCost.toFixed(2)}</p>
+                         </div>
+                     )}
+                     {d.overtimeHours === 0 && d.hours >= 35 && (
+                         <div className="mt-4 pt-4 border-t border-blue-500/20">
+                            <p className="text-[10px] font-bold tracking-widest uppercase text-blue-400/70 mb-1">Status Clearance Check</p>
+                            <p className="text-sm text-blue-300 font-mono font-bold">Approaching Limit</p>
+                         </div>
+                     )}
+                  </div>
+               ))}
+            </div>
+         </div>
+      )}
 
       {/* Location Filter */}
       <div className="flex gap-4 mb-8">
@@ -249,18 +303,18 @@ export default function SchedulingPage() {
          </div>
       </div>
 
-      {/* Staff Assignment Modal */}
+      {/* Staff Assignment Modal Flow */}
       {assignModalShift && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-           <div className="bg-slate-900 rounded-[2rem] border border-slate-700 w-full max-w-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-              <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+           <div className="bg-slate-900 rounded-[2rem] border border-slate-700 w-full max-w-2xl overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col max-h-[90vh]">
+              <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-800/50 shrink-0">
                  <div>
                    <h3 className="text-xl font-bold">Deploy Live Roster Match</h3>
                    <p className="text-xs text-slate-400 mt-1 font-mono">{assignModalShift.date} • {assignModalShift.startTime} to {assignModalShift.endTime}</p>
                  </div>
                  <button onClick={() => setAssignModalShift(null)} className="h-10 w-10 bg-slate-800 flex items-center justify-center rounded-full hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors">✕</button>
               </div>
-              <div className="p-8">
+              <div className="p-8 overflow-y-auto custom-scrollbar flex-1">
                  {/* Constraint Violations Pane */}
                  {validationData && !validationData.valid && (
                     <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 mb-8 animate-fade-in-up">
@@ -271,40 +325,43 @@ export default function SchedulingPage() {
                        <p className="text-red-300 text-sm mb-5 leading-relaxed bg-red-500/10 p-3 rounded-lg border border-red-500/20 font-mono">
                          {validationData.reason}
                        </p>
-                       
-                       <div className="pt-5 border-t border-red-500/20">
-                         <p className="text-slate-300 text-xs font-bold uppercase tracking-widest mb-3">AI Engine Fallback Suggestions:</p>
-                         
-                         {validationData.suggestions && validationData.suggestions.length > 0 ? (
-                           <div className="flex flex-wrap gap-2">
-                             {validationData.suggestions.map(sugg => (
-                               <button onClick={() => attemptAssignment(sugg)} key={sugg.id} className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/40 px-4 py-2 rounded-lg text-sm font-bold transition-all hover:-translate-y-0.5 shadow-lg">
-                                 Auto-Assign: {sugg.name}
-                               </button>
-                             ))}
-                           </div>
-                         ) : (
-                           <p className="text-slate-500 text-sm italic">The validation engine scanned the entire roster and found no available compliant alternatives for this shift.</p>
-                         )}
-                       </div>
                     </div>
                  )}
 
-                 {/* Roster Listing */}
+                 {/* Constraint Visualization Roster Listing */}
                  <div>
-                   <p className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-4">Manual Selection Roster</p>
-                   <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-3 custom-scrollbar">
-                      {staffList.map(staff => (
-                         <div key={staff.id} className="bg-slate-800 p-5 rounded-2xl border border-slate-700 flex justify-between items-center hover:border-slate-500 transition-colors shadow-sm">
-                            <div>
-                               <p className="font-bold text-lg text-white mb-1">{staff.name}</p>
-                               <p className="text-xs text-slate-400 font-mono">
-                                 {staff.skills.map(s=>s.name).join(' / ')} • {staff.desiredHours}h Target
-                               </p>
-                            </div>
-                            <button onClick={() => attemptAssignment(staff)} className="bg-slate-900 border border-slate-600 hover:border-blue-500 text-slate-300 hover:text-blue-400 px-6 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm">Execute Fit Test</button>
-                         </div>
-                      ))}
+                   <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-4">Manual Selection Candidates</p>
+                   <div className="space-y-4">
+                      {staffList.map(staff => {
+                         // PRE-FLIGHT CAPTURE: Calculate 'What-If' scenarios natively here!
+                         const preflight = validateAssignment(staff, assignModalShift, shifts, staffList);
+                         const isBlocked = !preflight.valid;
+
+                         return (
+                           <div key={staff.id} className={`bg-slate-800 p-5 rounded-[1.5rem] border flex justify-between items-center transition-all ${isBlocked ? 'opacity-50 border-slate-700 grayscale' : 'border-slate-700 hover:border-blue-500/50 shadow-lg'}`}>
+                              <div className="flex-1">
+                                 <p className="font-bold text-lg text-white mb-2">{staff.name}</p>
+                                 <div className="flex flex-wrap gap-2 text-[10px] font-bold tracking-widest uppercase mb-3">
+                                   <span className="bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-slate-400">{staff.skills?.map((s: Skill)=>s.name).join(' / ')}</span>
+                                   <span className="bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-slate-400">{staff.desiredHours}h Target</span>
+                                 </div>
+                                 
+                                 {/* Visualize dynamic warnings triggered by attempting this connection */}
+                                 {preflight.warnings && preflight.warnings.length > 0 && (
+                                   <div className="space-y-1 mt-2">
+                                     {preflight.warnings.map((w: string, idx: number) => (
+                                       <p key={idx} className={`text-xs px-2 py-1 object-fit inline-block rounded border font-mono ${preflight.requiresOverride && w.includes('7 Consecutive') ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/30'}`}>⚠️ {w}</p>
+                                     ))}
+                                   </div>
+                                 )}
+                                 {isBlocked && <p className="text-xs text-red-400 mt-2 font-mono ml-1">{preflight.reason}</p>}
+                              </div>
+                              <button disabled={isBlocked} onClick={() => attemptAssignment(staff)} className={`px-6 py-3 rounded-xl font-bold text-sm transition-all shadow-sm flex flex-col gap-1 items-center ${isBlocked ? 'bg-slate-900 text-slate-600 cursor-not-allowed border border-slate-800' : 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-500 shadow-[0_0_15px_rgba(37,99,235,0.2)]'}`}>
+                                <span>{isBlocked ? 'BLOCKED' : preflight.requiresOverride ? 'OVERRIDE EXECUTE' : 'ASSIGN SHIFT'}</span>
+                              </button>
+                           </div>
+                         );
+                      })}
                    </div>
                  </div>
               </div>

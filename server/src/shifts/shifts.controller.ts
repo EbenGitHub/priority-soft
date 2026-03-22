@@ -21,8 +21,8 @@ export class ShiftsController {
   }
 
   @Put(':id/assign')
-  assignStaff(@Param('id') id: string, @Body() body: { userId: string | null }) {
-    return this.shiftsService.assignStaff(id, body.userId);
+  assignStaff(@Param('id') id: string, @Body() body: { userId: string | null; overrideReason?: string }) {
+    return this.shiftsService.assignStaff(id, body.userId, body.overrideReason);
   }
 
   @Put(':id/publish')
