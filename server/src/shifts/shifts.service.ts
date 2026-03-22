@@ -10,6 +10,13 @@ import { SwapRequest } from '../swaps/entities/swap.entity';
 import { EventsGateway } from '../events/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { availabilityContainsShift, buildShiftUtcRange, getLocalDateKey, getShiftUtcRange } from '../calendar/calendar-time.util';
+import { AuditService } from '../audit/audit.service';
+
+type AuditActorPayload = {
+  actorId?: string;
+  actorName?: string;
+  actorRole?: string;
+};
 
 @Injectable()
 export class ShiftsService {
@@ -21,9 +28,29 @@ export class ShiftsService {
     @InjectRepository(SwapRequest) private readonly swapRepo: Repository<SwapRequest>,
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
+    private readonly auditService: AuditService,
   ) {}
 
-  async createShift(data: { locationId: string; date: string; startTime: string; endTime: string; requiredSkillId: string }) {
+  private snapshotShift(shift: Shift) {
+    return {
+      shiftId: shift.id,
+      date: shift.date,
+      startTime: shift.startTime,
+      endTime: shift.endTime,
+      startUtc: shift.startUtc?.toISOString?.() || null,
+      endUtc: shift.endUtc?.toISOString?.() || null,
+      isOvernight: shift.isOvernight,
+      published: shift.published,
+      assignedStaffId: shift.assignedStaff?.id || null,
+      assignedStaffName: shift.assignedStaff?.name || null,
+      requiredSkillId: shift.requiredSkill?.id || null,
+      requiredSkillName: shift.requiredSkill?.name || null,
+      locationId: shift.location?.id || null,
+      locationName: shift.location?.name || null,
+    };
+  }
+
+  async createShift(data: { locationId: string; date: string; startTime: string; endTime: string; requiredSkillId: string; actorId?: string; actorName?: string; actorRole?: string }) {
     const loc = await this.locRepo.findOneBy({ id: data.locationId });
     const skill = await this.skillRepo.findOneBy({ id: data.requiredSkillId });
     if (!loc || !skill) throw new NotFoundException('Invalid location or skill');
@@ -41,6 +68,19 @@ export class ShiftsService {
       published: false,
     });
     const saved = await this.shiftRepo.save(shift);
+    await this.auditService.logShiftChange({
+      shift: saved,
+      location: loc,
+      action: 'SHIFT_CREATED',
+      actor: data,
+      beforeState: null,
+      afterState: this.snapshotShift({
+        ...saved,
+        location: loc,
+        requiredSkill: skill,
+      } as Shift),
+      summary: `Created shift for ${loc.name} on ${saved.date} from ${saved.startTime} to ${saved.endTime}.`,
+    });
     this.eventsGateway.emitScheduleUpdate();
     return saved;
   }
@@ -130,16 +170,28 @@ export class ShiftsService {
     }
   }
 
-  async togglePublish(shiftId: string) {
+  async togglePublish(shiftId: string, actor?: AuditActorPayload) {
     const shift = await this.shiftRepo.findOne({
       where: { id: shiftId },
       relations: ['assignedStaff', 'location'],
     });
     if (!shift) throw new NotFoundException('Shift not found');
     if (shift.published) this.validateCutoff(shift);
+    const beforeState = this.snapshotShift(shift);
 
     shift.published = !shift.published;
     const saved = await this.shiftRepo.save(shift);
+    await this.auditService.logShiftChange({
+      shift: saved,
+      location: saved.location,
+      action: saved.published ? 'SHIFT_PUBLISHED' : 'SHIFT_UNPUBLISHED',
+      actor,
+      beforeState,
+      afterState: this.snapshotShift(saved),
+      summary: saved.published
+        ? `Published shift at ${saved.location.name}.`
+        : `Unpublished shift at ${saved.location.name}.`,
+    });
     this.eventsGateway.emitScheduleUpdate();
 
     if (saved.published && saved.assignedStaff) {
@@ -229,13 +281,14 @@ export class ShiftsService {
     }
   }
 
-  async assignStaff(shiftId: string, userId: string | null, overrideReason?: string) {
+  async assignStaff(shiftId: string, userId: string | null, overrideReason?: string, actor?: AuditActorPayload) {
     const shift = await this.shiftRepo.findOne({ 
       where: { id: shiftId }, 
       relations: ['location', 'requiredSkill', 'assignedStaff'] 
     });
     if (!shift) throw new NotFoundException('Shift not found');
     const previousAssignedStaffId = shift.assignedStaff?.id ?? null;
+    const beforeState = this.snapshotShift(shift);
 
     if (userId === null) {
       if (shift.assignedStaff) this.validateCutoff(shift);
@@ -267,6 +320,15 @@ export class ShiftsService {
     if (userId === null) {
       shift.assignedStaff = null;
       const saved = await this.shiftRepo.save(shift);
+      await this.auditService.logShiftChange({
+        shift: saved,
+        location: saved.location,
+        action: 'SHIFT_UNASSIGNED',
+        actor,
+        beforeState,
+        afterState: this.snapshotShift(saved),
+        summary: `Removed staff assignment from shift at ${saved.location.name}.`,
+      });
       this.eventsGateway.emitScheduleUpdate();
       return saved;
     }
@@ -281,6 +343,17 @@ export class ShiftsService {
     shift.endUtc = timing.endUtc;
     shift.isOvernight = timing.isOvernight;
     const saved = await this.shiftRepo.save(shift);
+    await this.auditService.logShiftChange({
+      shift: saved,
+      location: saved.location,
+      action: previousAssignedStaffId && previousAssignedStaffId !== userId ? 'SHIFT_REASSIGNED' : 'SHIFT_ASSIGNED',
+      actor,
+      beforeState,
+      afterState: this.snapshotShift(saved),
+      summary: previousAssignedStaffId && previousAssignedStaffId !== userId
+        ? `Reassigned shift at ${saved.location.name} to ${assignedStaff.name}.`
+        : `Assigned ${assignedStaff.name} to shift at ${saved.location.name}.`,
+    });
     this.eventsGateway.emitScheduleUpdate();
 
     if (previousAssignedStaffId !== userId) {

@@ -21,12 +21,12 @@ export class ShiftsController {
   }
 
   @Put(':id/assign')
-  assignStaff(@Param('id') id: string, @Body() body: { userId: string | null; overrideReason?: string }) {
-    return this.shiftsService.assignStaff(id, body.userId, body.overrideReason);
+  assignStaff(@Param('id') id: string, @Body() body: { userId: string | null; overrideReason?: string; actorId?: string; actorName?: string; actorRole?: string }) {
+    return this.shiftsService.assignStaff(id, body.userId, body.overrideReason, body);
   }
 
   @Put(':id/publish')
-  togglePublish(@Param('id') id: string) {
-    return this.shiftsService.togglePublish(id);
+  togglePublish(@Param('id') id: string, @Body() body: { actorId?: string; actorName?: string; actorRole?: string }) {
+    return this.shiftsService.togglePublish(id, body);
   }
 }

@@ -10,6 +10,8 @@ import { Role } from '../users/enums/role.enum';
 import { AvailabilityType } from '../users/enums/availability-type.enum';
 import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationPreference } from '../notifications/entities/notification-preference.entity';
+import { AuditLog } from '../audit/entities/audit-log.entity';
+import { Shift } from '../shifts/entities/shift.entity';
 
 @Injectable()
 export class SeedService implements OnApplicationBootstrap {
@@ -23,6 +25,8 @@ export class SeedService implements OnApplicationBootstrap {
     @InjectRepository(Notification) private readonly notificationRepository: Repository<Notification>,
     @InjectRepository(NotificationPreference)
     private readonly preferenceRepository: Repository<NotificationPreference>,
+    @InjectRepository(AuditLog) private readonly auditRepository: Repository<AuditLog>,
+    @InjectRepository(Shift) private readonly shiftRepository: Repository<Shift>,
   ) {}
 
   async onApplicationBootstrap() {
@@ -178,6 +182,49 @@ export class SeedService implements OnApplicationBootstrap {
         title: 'Cross-location overtime alert',
         message: 'The LA location has two staff members approaching overtime this week.',
         metadata: { emailEnabled: true },
+      },
+    ]);
+
+    const seedShift = await this.shiftRepository.save({
+      location: loc1,
+      date: '2026-03-27',
+      startTime: '23:00:00',
+      endTime: '03:00:00',
+      startUtc: new Date('2026-03-28T03:00:00.000Z'),
+      endUtc: new Date('2026-03-28T07:00:00.000Z'),
+      isOvernight: true,
+      requiredSkill: skillBartender,
+      assignedStaff: staff3,
+      published: true,
+    });
+
+    await this.auditRepository.save([
+      {
+        shift: seedShift,
+        location: loc1,
+        action: 'SHIFT_CREATED',
+        actorId: eastManager.id,
+        actorName: eastManager.name,
+        actorRole: eastManager.role,
+        beforeState: null,
+        afterState: {
+          date: '2026-03-27',
+          startTime: '23:00:00',
+          endTime: '03:00:00',
+          published: false,
+        },
+        summary: 'Created an overnight bartender shift for Friday close.',
+      },
+      {
+        shift: seedShift,
+        location: loc1,
+        action: 'SHIFT_PUBLISHED',
+        actorId: eastManager.id,
+        actorName: eastManager.name,
+        actorRole: eastManager.role,
+        beforeState: { published: false },
+        afterState: { published: true },
+        summary: 'Published a NYC schedule block to staff.',
       },
     ]);
 

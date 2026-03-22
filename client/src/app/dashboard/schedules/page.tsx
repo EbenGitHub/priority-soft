@@ -7,6 +7,9 @@ import { FairnessAnalytics } from '../../../lib/fairnessMetrics';
 import { useRealtime } from '../../../lib/useRealtime';
 import { fetchCalendarShifts, previewShiftTiming } from '../../../lib/calendarApi';
 import { buildShiftUtcRange, getShiftTiming, isShiftActive } from '../../../lib/calendarTime';
+import { fetchShiftAuditLogs } from '../../../lib/auditApi';
+import { AuditLogRecord } from '../../../lib/auditTypes';
+import { getMockAuditLogsForShift } from '../../../lib/mockAuditLogs';
 
 export default function SchedulingPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -17,12 +20,16 @@ export default function SchedulingPage() {
   const [selectedLocation, setSelectedLocation] = useState<string>('');
   const [showShiftModal, setShowShiftModal] = useState(false);
   const [assignModalShift, setAssignModalShift] = useState<Shift | null>(null);
+  const [historyShift, setHistoryShift] = useState<Shift | null>(null);
+  const [shiftHistory, setShiftHistory] = useState<AuditLogRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [newShiftDate, setNewShiftDate] = useState('');
   const [newShiftStart, setNewShiftStart] = useState('');
   const [newShiftEnd, setNewShiftEnd] = useState('');
   const [newShiftSkill, setNewShiftSkill] = useState('');
   const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
+  const [actor, setActor] = useState<{ actorId?: string; actorName?: string; actorRole?: string }>({});
   const [shiftPreview, setShiftPreview] = useState<null | {
     startUtc: string;
     endUtc: string;
@@ -38,6 +45,29 @@ export default function SchedulingPage() {
 
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
   const [fairnessData, setFairnessData] = useState<FairnessAnalytics | null>(null);
+
+  useEffect(() => {
+    if (!historyShift) return;
+    const shiftId = historyShift.id;
+
+    let cancelled = false;
+    async function loadHistory() {
+      setHistoryLoading(true);
+      try {
+        const logs = await fetchShiftAuditLogs(shiftId);
+        if (!cancelled) setShiftHistory(logs);
+      } catch {
+        if (!cancelled) setShiftHistory(getMockAuditLogsForShift(shiftId));
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    }
+
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [historyShift]);
   
   // Phase 7: Real-Time Sync Hook mapping to local re-renders
   const { isConnected, lastSync } = useRealtime(() => {
@@ -48,6 +78,15 @@ export default function SchedulingPage() {
 
   useEffect(() => {
     setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+    const rawUser = window.localStorage.getItem('shiftSync_user');
+    if (rawUser) {
+      const parsedUser = JSON.parse(rawUser) as { id: string; name: string; role: string };
+      setActor({
+        actorId: parsedUser.id,
+        actorName: parsedUser.name,
+        actorRole: parsedUser.role,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -200,7 +239,8 @@ export default function SchedulingPage() {
           date: newShiftDate,
           startTime: newShiftStart + ':00',
           endTime: newShiftEnd + ':00',
-          requiredSkillId: newShiftSkill
+          requiredSkillId: newShiftSkill,
+          ...actor,
         })
       });
       if (res.ok) {
@@ -235,7 +275,7 @@ export default function SchedulingPage() {
       const res = await fetch(`${API_URL}/shifts/${assignModalShift.id}/assign`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: targetStaff.id, overrideReason }) // Mock integration bridging sequence bounds
+        body: JSON.stringify({ userId: targetStaff.id, overrideReason, ...actor }) // Mock integration bridging sequence bounds
       });
       
       if (!res.ok) {
@@ -265,7 +305,7 @@ export default function SchedulingPage() {
       const res = await fetch(`${API_URL}/shifts/${shift.id}/assign`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: null })
+        body: JSON.stringify({ userId: null, ...actor })
       });
       if (!res.ok) {
         const err = await res.json();
@@ -282,7 +322,11 @@ export default function SchedulingPage() {
   const togglePublishState = async (shiftId: string) => {
      try {
        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-       const res = await fetch(`${API_URL}/shifts/${shiftId}/publish`, { method: 'PUT' });
+       const res = await fetch(`${API_URL}/shifts/${shiftId}/publish`, {
+         method: 'PUT',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify(actor),
+       });
        if (!res.ok) {
          const err = await res.json();
          alert(`Error publishing deployment clause: ${err.message}`);
@@ -533,6 +577,9 @@ export default function SchedulingPage() {
                          <span className="text-xl leading-none">→</span>
                        </button>
                     )}
+                    <button onClick={() => setHistoryShift(shift)} className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-bold uppercase tracking-widest text-slate-300 transition hover:border-cyan-500/40 hover:text-cyan-300">
+                      View Audit Trail
+                    </button>
                   </div>
                 </div>
               );
@@ -657,6 +704,52 @@ export default function SchedulingPage() {
                  </div>
               </form>
            </div>
+        </div>
+      )}
+
+      {historyShift && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-[2rem] border border-slate-700 bg-slate-900 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-800/50 p-6">
+              <div>
+                <h3 className="text-xl font-bold">Shift Audit Trail</h3>
+                <p className="mt-1 text-xs font-mono text-slate-400">
+                  {getShiftTiming(historyShift, viewerTimeZone).locationDate} • {getShiftTiming(historyShift, viewerTimeZone).locationTimeRange} • {historyShift.location?.name}
+                </p>
+              </div>
+              <button onClick={() => setHistoryShift(null)} className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-slate-300 transition-colors hover:bg-slate-700">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {historyLoading && <div className="rounded-2xl border border-slate-800 bg-slate-950 p-8 text-center text-sm text-slate-500">Loading audit history...</div>}
+              {!historyLoading && shiftHistory.length === 0 && <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-950 p-8 text-center text-sm text-slate-500">No audit events recorded for this shift yet.</div>}
+              {!historyLoading && shiftHistory.length > 0 && (
+                <div className="space-y-4">
+                  {shiftHistory.map((entry) => (
+                    <div key={entry.id} className="rounded-[1.5rem] border border-slate-700 bg-slate-950 p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">{entry.action.replaceAll('_', ' ')}</p>
+                          <p className="mt-2 text-base font-semibold text-white">{entry.summary}</p>
+                          <p className="mt-1 text-xs text-slate-400">{entry.actorName} • {entry.actorRole}</p>
+                        </div>
+                        <p className="text-xs font-mono text-slate-500">{new Date(entry.occurredAt).toLocaleString()}</p>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Before</p>
+                          <pre className="whitespace-pre-wrap text-xs text-slate-300">{JSON.stringify(entry.beforeState, null, 2)}</pre>
+                        </div>
+                        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">After</p>
+                          <pre className="whitespace-pre-wrap text-xs text-slate-300">{JSON.stringify(entry.afterState, null, 2)}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -12,6 +12,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { EventsModule } from './events/events.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { CalendarModule } from './calendar/calendar.module';
     EventsModule,
     NotificationsModule,
     CalendarModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [AppService],
