@@ -6,9 +6,10 @@ import { Location } from '../locations/entities/location.entity';
 import { Skill } from '../users/entities/skill.entity';
 import { ShiftsController } from './shifts.controller';
 import { ShiftsService } from './shifts.service';
+import { SwapRequest } from '../swaps/entities/swap.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Shift, User, Location, Skill])],
+  imports: [TypeOrmModule.forFeature([Shift, User, Location, Skill, SwapRequest])],
   controllers: [ShiftsController],
   providers: [ShiftsService],
   exports: [ShiftsService],

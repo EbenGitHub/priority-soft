@@ -1,31 +1,35 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { LocationsModule } from './locations/locations.module';
 import { SeedModule } from './seed/seed.module';
 import { ShiftsModule } from './shifts/shifts.module';
+import { SwapsModule } from './swaps/swaps.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
+      isGlobal: true,
       envFilePath: '.env',
     }),
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      url: process.env.SUPABASE_DB_TRX_POOLER,
-      autoLoadEntities: true,
-      synchronize: true,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        url: config.get<string>('DATABASE_URL'),
+        autoLoadEntities: true,
+        synchronize: true,
+      }),
     }),
     UsersModule,
     LocationsModule,
     SeedModule,
     ShiftsModule,
+    SwapsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

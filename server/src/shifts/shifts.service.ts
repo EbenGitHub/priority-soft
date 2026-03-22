@@ -6,6 +6,7 @@ import { User } from '../users/entities/user.entity';
 import { Location } from '../locations/entities/location.entity';
 import { Skill } from '../users/entities/skill.entity';
 import { AvailabilityType } from '../users/enums/availability-type.enum';
+import { SwapRequest } from '../swaps/entities/swap.entity';
 
 @Injectable()
 export class ShiftsService {
@@ -14,9 +15,9 @@ export class ShiftsService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(Location) private readonly locRepo: Repository<Location>,
     @InjectRepository(Skill) private readonly skillRepo: Repository<Skill>,
+    @InjectRepository(SwapRequest) private readonly swapRepo: Repository<SwapRequest>,
   ) {}
 
-  // 1. Create Draft Shift
   async createShift(data: { locationId: string; date: string; startTime: string; endTime: string; requiredSkillId: string }) {
     const loc = await this.locRepo.findOneBy({ id: data.locationId });
     const skill = await this.skillRepo.findOneBy({ id: data.requiredSkillId });
@@ -33,7 +34,6 @@ export class ShiftsService {
     return this.shiftRepo.save(shift);
   }
 
-  // 2. Fetch Global or Location Roster
   async findAll() {
     return this.shiftRepo.find({
       relations: ['requiredSkill', 'assignedStaff', 'location'],
@@ -54,61 +54,34 @@ export class ShiftsService {
   }
 
   private getDayOfWeek(dateStr: string): number {
-    return new Date(`${dateStr}T12:00:00Z`).getUTCDay(); // Safe parsing
+    return new Date(`${dateStr}T12:00:00Z`).getUTCDay();
   }
 
   public validateCutoff(shift: Shift) {
     const shiftStart = this.parseDateTime(shift.date, shift.startTime);
     const now = Date.now();
     const diffHours = (shiftStart - now) / (1000 * 60 * 60);
-    // Explicit rule 48 Hour cutoff
-    if (diffHours <= 48 && diffHours > -100) { // Protects against historical
+    if (diffHours <= 48 && diffHours > -100) {
       throw new ForbiddenException(`Cannot modify schedule within 48 hours of shift. (Shift starts in ${diffHours.toFixed(1)} hours)`);
     }
   }
 
-  // 3. Unpublish / Publish
   async togglePublish(shiftId: string) {
     const shift = await this.shiftRepo.findOneBy({ id: shiftId });
     if (!shift) throw new NotFoundException('Shift not found');
-    
-    // Check cutoff if unpublishing
-    if (shift.published) {
-      this.validateCutoff(shift);
-    }
+    if (shift.published) this.validateCutoff(shift);
 
     shift.published = !shift.published;
     return this.shiftRepo.save(shift);
   }
 
-  // 4. Assignment & Constraints Evaluation Loop
-  async assignStaff(shiftId: string, userId: string | null) {
-    const shift = await this.shiftRepo.findOne({ 
-      where: { id: shiftId }, 
-      relations: ['location', 'requiredSkill', 'assignedStaff'] 
-    });
-    if (!shift) throw new NotFoundException('Shift not found');
-
-    if (userId === null) {
-      // Validate 48 Hour protection when Unassigning active staff
-      if (shift.assignedStaff) this.validateCutoff(shift);
-      shift.assignedStaff = null;
-      return this.shiftRepo.save(shift);
-    }
-
-    if (shift.assignedStaff && shift.assignedStaff.id !== userId) {
-      this.validateCutoff(shift);
-    }
-
+  async validateAssignment(shift: Shift, userId: string) {
     const staff = await this.userRepo.findOne({
       where: { id: userId },
       relations: ['locations', 'skills', 'availabilities']
     });
-    
     if (!staff) throw new NotFoundException('Staff member not found');
 
-    // -- Validations --
-    
     if (!staff.locations.some(l => l.id === shift.location.id)) {
       throw new BadRequestException('Staff member is not certified to work at this location.');
     }
@@ -158,8 +131,41 @@ export class ShiftsService {
         throw new BadRequestException(`Violates 10-hour rest compliance rule (Next shift cuts rest to ${hoursBetweenAfter.toFixed(1)} hours).`);
       }
     }
+  }
 
-    shift.assignedStaff = staff;
+  async assignStaff(shiftId: string, userId: string | null) {
+    const shift = await this.shiftRepo.findOne({ 
+      where: { id: shiftId }, 
+      relations: ['location', 'requiredSkill', 'assignedStaff'] 
+    });
+    if (!shift) throw new NotFoundException('Shift not found');
+
+    if (userId === null) {
+      if (shift.assignedStaff) this.validateCutoff(shift);
+    } else if (shift.assignedStaff && shift.assignedStaff.id !== userId) {
+      this.validateCutoff(shift);
+    }
+
+    const activeSwaps = await this.swapRepo.createQueryBuilder('s')
+       .where('s.status IN (:...statuses)', { statuses: ['PENDING_PEER', 'PENDING_MANAGER'] })
+       .andWhere('(s.initiatorShiftId = :shiftId OR s.targetShiftId = :shiftId)', { shiftId: shift.id })
+       .getMany();
+       
+    if (activeSwaps.length > 0) {
+       for (const swap of activeSwaps) {
+         swap.status = 'CANCELLED';
+         await this.swapRepo.save(swap);
+       }
+    }
+
+    if (userId === null) {
+      shift.assignedStaff = null;
+      return this.shiftRepo.save(shift);
+    }
+
+    await this.validateAssignment(shift, userId);
+
+    shift.assignedStaff = { id: userId } as User;
     return this.shiftRepo.save(shift);
   }
 }
