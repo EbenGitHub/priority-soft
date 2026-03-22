@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
 import { LocationsModule } from './locations/locations.module';
 import { SeedModule } from './seed/seed.module';
+import { ShiftsModule } from './shifts/shifts.module';
 
 @Module({
   imports: [
@@ -18,12 +19,13 @@ import { SeedModule } from './seed/seed.module';
       autoLoadEntities: true,
       synchronize: true,
       ssl: {
-        rejectUnauthorized: false, // Required for Supabase connections
+        rejectUnauthorized: false,
       },
     }),
     UsersModule,
     LocationsModule,
     SeedModule,
+    ShiftsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

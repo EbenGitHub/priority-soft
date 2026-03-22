@@ -36,10 +36,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
         
         <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-          <a href="#" className="flex items-center px-4 py-3 bg-blue-600/10 text-blue-400 border border-blue-500/20 rounded-xl font-bold transition-all shadow-inner">
+          <a href="/dashboard" className="flex items-center px-4 py-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all font-medium border border-transparent hover:border-slate-700">
             Dashboard
           </a>
-          <a href="#" className="flex items-center px-4 py-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all font-medium border border-transparent hover:border-slate-700">
+          <a href="/dashboard/schedules" className="flex items-center px-4 py-3 bg-blue-600/10 text-blue-400 border border-blue-500/20 rounded-xl font-bold transition-all shadow-inner">
             Schedules
           </a>
           <a href="#" className="flex items-center px-4 py-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all font-medium border border-transparent hover:border-slate-700">
