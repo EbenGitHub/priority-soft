@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
+import NotificationCenter from '../../components/layout/NotificationCenter';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null);
@@ -67,10 +68,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 h-screen overflow-y-auto">
-        <div className="p-8 pb-20">
-          {children}
-        </div>
+      <main className="flex-1 h-screen overflow-y-auto flex flex-col relative w-full">
+         <header className="h-20 border-b border-slate-800 flex items-center justify-end px-8 shrink-0 relative z-20 sticky top-0 bg-slate-950/80 backdrop-blur-md transition-all">
+            <NotificationCenter user={user} />
+         </header>
+         <div className="p-8 pb-20 flex-1">
+            {children}
+         </div>
       </main>
     </div>
   );

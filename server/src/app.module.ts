@@ -10,6 +10,7 @@ import { ShiftsModule } from './shifts/shifts.module';
 import { SwapsModule } from './swaps/swaps.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { EventsModule } from './events/events.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { EventsModule } from './events/events.module';
     SwapsModule,
     AnalyticsModule,
     EventsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

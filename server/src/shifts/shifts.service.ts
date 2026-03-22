@@ -8,6 +8,7 @@ import { Skill } from '../users/entities/skill.entity';
 import { AvailabilityType } from '../users/enums/availability-type.enum';
 import { SwapRequest } from '../swaps/entities/swap.entity';
 import { EventsGateway } from '../events/events.gateway';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ShiftsService {
@@ -18,6 +19,7 @@ export class ShiftsService {
     @InjectRepository(Skill) private readonly skillRepo: Repository<Skill>,
     @InjectRepository(SwapRequest) private readonly swapRepo: Repository<SwapRequest>,
     private readonly eventsGateway: EventsGateway,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async createShift(data: { locationId: string; date: string; startTime: string; endTime: string; requiredSkillId: string }) {
@@ -68,6 +70,40 @@ export class ShiftsService {
     return (end - start) / (1000 * 60 * 60);
   }
 
+  private async notifyManagersForLocation(locationId: string, payload: Parameters<NotificationsService['createForUsers']>[1]) {
+    const managers = await this.userRepo
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.locations', 'location')
+      .where('user.role = :role', { role: 'MANAGER' })
+      .andWhere('location.id = :locationId', { locationId })
+      .getMany();
+
+    await this.notificationsService.createForUsers(
+      managers.map((manager) => manager.id),
+      payload,
+    );
+  }
+
+  private async getWeeklyHoursForStaff(staffId: string, shift: Shift) {
+    const shiftDate = new Date(`${shift.date}T12:00:00Z`);
+    const day = shiftDate.getUTCDay();
+    const weekStart = new Date(shiftDate);
+    weekStart.setUTCDate(shiftDate.getUTCDate() - day);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
+    const start = weekStart.toISOString().split('T')[0];
+    const end = weekEnd.toISOString().split('T')[0];
+
+    const shifts = await this.shiftRepo
+      .createQueryBuilder('shift')
+      .leftJoinAndSelect('shift.assignedStaff', 'assignedStaff')
+      .where('assignedStaff.id = :staffId', { staffId })
+      .andWhere('shift.date BETWEEN :start AND :end', { start, end })
+      .getMany();
+
+    return shifts.reduce((total, scheduledShift) => total + this.getShiftDuration(scheduledShift), 0);
+  }
+
   private calculateConsecutiveDays(shifts: Shift[], newShift: Shift): number {
      const targetDate = new Date(`${newShift.date}T12:00:00Z`);
      let consecutive = 1;
@@ -97,13 +133,26 @@ export class ShiftsService {
   }
 
   async togglePublish(shiftId: string) {
-    const shift = await this.shiftRepo.findOneBy({ id: shiftId });
+    const shift = await this.shiftRepo.findOne({
+      where: { id: shiftId },
+      relations: ['assignedStaff', 'location'],
+    });
     if (!shift) throw new NotFoundException('Shift not found');
     if (shift.published) this.validateCutoff(shift);
 
     shift.published = !shift.published;
     const saved = await this.shiftRepo.save(shift);
     this.eventsGateway.emitScheduleUpdate();
+
+    if (saved.published && saved.assignedStaff) {
+      await this.notificationsService.createForUser(saved.assignedStaff.id, {
+        type: 'SCHEDULE_PUBLISHED',
+        title: 'Schedule published',
+        message: `${saved.location.name} published your ${saved.date} shift schedule.`,
+        metadata: { shiftId: saved.id },
+      });
+    }
+
     return saved;
   }
 
@@ -186,6 +235,7 @@ export class ShiftsService {
       relations: ['location', 'requiredSkill', 'assignedStaff'] 
     });
     if (!shift) throw new NotFoundException('Shift not found');
+    const previousAssignedStaffId = shift.assignedStaff?.id ?? null;
 
     if (userId === null) {
       if (shift.assignedStaff) this.validateCutoff(shift);
@@ -194,6 +244,8 @@ export class ShiftsService {
     }
 
     const activeSwaps = await this.swapRepo.createQueryBuilder('s')
+       .leftJoinAndSelect('s.initiatorUser', 'initiatorUser')
+       .leftJoinAndSelect('s.targetUser', 'targetUser')
        .where('s.status IN (:...statuses)', { statuses: ['PENDING_PEER', 'PENDING_MANAGER'] })
        .andWhere('(s.initiatorShiftId = :shiftId OR s.targetShiftId = :shiftId)', { shiftId: shift.id })
        .getMany();
@@ -202,6 +254,13 @@ export class ShiftsService {
        for (const swap of activeSwaps) {
          swap.status = 'CANCELLED';
          await this.swapRepo.save(swap);
+         const swapUsers = [swap.initiatorUser?.id, swap.targetUser?.id].filter(Boolean) as string[];
+         await this.notificationsService.createForUsers(swapUsers, {
+           type: 'SWAP_REQUEST_CANCELLED',
+           title: 'Pending swap cancelled',
+           message: 'A manager changed the underlying shift, so the pending swap or drop request was cancelled.',
+           metadata: { shiftId: shift.id, swapId: swap.id },
+         });
        }
     }
 
@@ -213,10 +272,32 @@ export class ShiftsService {
     }
 
     await this.validateAssignment(shift, userId, overrideReason);
+    const assignedStaff = await this.userRepo.findOneBy({ id: userId });
+    if (!assignedStaff) throw new NotFoundException('Staff member not found');
 
-    shift.assignedStaff = { id: userId } as User;
+    shift.assignedStaff = assignedStaff;
     const saved = await this.shiftRepo.save(shift);
     this.eventsGateway.emitScheduleUpdate();
+
+    if (previousAssignedStaffId !== userId) {
+      await this.notificationsService.createForUser(userId, {
+        type: 'SHIFT_ASSIGNED',
+        title: previousAssignedStaffId ? 'Shift reassigned to you' : 'New shift assigned',
+        message: `You were assigned to the ${saved.location.name} shift on ${saved.date} from ${saved.startTime.slice(0, 5)} to ${saved.endTime.slice(0, 5)}.`,
+        metadata: { shiftId: saved.id },
+      });
+    }
+
+    const weeklyHours = await this.getWeeklyHoursForStaff(userId, saved);
+    if (weeklyHours >= 35) {
+      await this.notifyManagersForLocation(saved.location.id, {
+        type: 'OVERTIME_WARNING',
+        title: 'Projected overtime warning',
+        message: `${assignedStaff.name} is projected for ${weeklyHours.toFixed(1)} hours this week after this assignment.`,
+        metadata: { shiftId: saved.id, userId },
+      });
+    }
+
     return saved;
   }
 }

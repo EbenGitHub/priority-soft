@@ -1,8 +1,10 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToMany, JoinTable, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToMany, JoinTable, OneToMany, OneToOne } from 'typeorm';
 import { Role } from '../enums/role.enum';
 import { Location } from '../../locations/entities/location.entity';
 import { Skill } from './skill.entity';
 import { Availability } from './availability.entity';
+import { Notification } from '../../notifications/entities/notification.entity';
+import { NotificationPreference } from '../../notifications/entities/notification-preference.entity';
 
 @Entity('users')
 export class User {
@@ -38,4 +40,10 @@ export class User {
 
   @OneToMany(() => Availability, availability => availability.user)
   availabilities: Availability[];
+
+  @OneToMany(() => Notification, notification => notification.user)
+  notifications: Notification[];
+
+  @OneToOne(() => NotificationPreference, preference => preference.user)
+  notificationPreference: NotificationPreference;
 }

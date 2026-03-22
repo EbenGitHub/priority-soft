@@ -8,6 +8,8 @@ import { Skill } from '../users/entities/skill.entity';
 import { Availability } from '../users/entities/availability.entity';
 import { Role } from '../users/enums/role.enum';
 import { AvailabilityType } from '../users/enums/availability-type.enum';
+import { Notification } from '../notifications/entities/notification.entity';
+import { NotificationPreference } from '../notifications/entities/notification-preference.entity';
 
 @Injectable()
 export class SeedService implements OnApplicationBootstrap {
@@ -18,6 +20,9 @@ export class SeedService implements OnApplicationBootstrap {
     @InjectRepository(Location) private readonly locationRepository: Repository<Location>,
     @InjectRepository(Skill) private readonly skillRepository: Repository<Skill>,
     @InjectRepository(Availability) private readonly availabilityRepository: Repository<Availability>,
+    @InjectRepository(Notification) private readonly notificationRepository: Repository<Notification>,
+    @InjectRepository(NotificationPreference)
+    private readonly preferenceRepository: Repository<NotificationPreference>,
   ) {}
 
   async onApplicationBootstrap() {
@@ -43,7 +48,7 @@ export class SeedService implements OnApplicationBootstrap {
     const skillHost = await this.skillRepository.save({ name: 'host' });
 
     // 3. Admin User
-    await this.userRepository.save({
+    const admin = await this.userRepository.save({
       name: 'Corporate Admin',
       email: 'admin@coastaleats.com',
       role: Role.ADMIN,
@@ -51,14 +56,14 @@ export class SeedService implements OnApplicationBootstrap {
     });
 
     // 4. Managers
-    await this.userRepository.save({
+    const eastManager = await this.userRepository.save({
       name: 'East Coast Manager',
       email: 'eastmanager@coastaleats.com',
       role: Role.MANAGER,
       locations: [loc1, loc2],
     });
 
-    await this.userRepository.save({
+    const westManager = await this.userRepository.save({
       name: 'West Coast Manager',
       email: 'westmanager@coastaleats.com',
       role: Role.MANAGER,
@@ -124,6 +129,54 @@ export class SeedService implements OnApplicationBootstrap {
       startTime: '10:00:00',
       endTime: '22:00:00',
     });
+
+    await this.preferenceRepository.save([
+      { user: admin, inAppEnabled: true, emailEnabled: true },
+      { user: eastManager, inAppEnabled: true, emailEnabled: true },
+      { user: westManager, inAppEnabled: true, emailEnabled: false },
+      { user: staff1, inAppEnabled: true, emailEnabled: false },
+      { user: staff2, inAppEnabled: true, emailEnabled: false },
+      { user: staff3, inAppEnabled: true, emailEnabled: true },
+    ]);
+
+    await this.notificationRepository.save([
+      {
+        user: staff1,
+        type: 'SHIFT_ASSIGNED',
+        title: 'New shift assigned',
+        message: 'You were assigned to the NYC lunch shift on March 24 from 11:00 to 17:00.',
+        metadata: { emailEnabled: false },
+      },
+      {
+        user: staff1,
+        type: 'SCHEDULE_PUBLISHED',
+        title: 'Schedule published',
+        message: 'Your next weekly schedule has been published for Coastal Eats NYC.',
+        metadata: { emailEnabled: false },
+        readAt: new Date(),
+      },
+      {
+        user: eastManager,
+        type: 'SWAP_APPROVAL_REQUIRED',
+        title: 'Swap approval required',
+        message: 'A Friday evening bartender swap is waiting for manager approval.',
+        metadata: { emailEnabled: true },
+      },
+      {
+        user: eastManager,
+        type: 'OVERTIME_WARNING',
+        title: 'Projected overtime warning',
+        message: 'Maria Bartender is projected above 35 hours if the Sunday close stays assigned.',
+        metadata: { emailEnabled: true },
+      },
+      {
+        user: admin,
+        type: 'OVERTIME_WARNING',
+        title: 'Cross-location overtime alert',
+        message: 'The LA location has two staff members approaching overtime this week.',
+        metadata: { emailEnabled: true },
+      },
+    ]);
 
     this.logger.log('Seed data successfully committed.');
   }
