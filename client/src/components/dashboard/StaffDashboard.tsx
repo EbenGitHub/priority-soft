@@ -13,7 +13,8 @@ export default function StaffDashboard({ user }: { user: any }) {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/users/${user.id}/availability`, {
+      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(`${API_URL}/users/${user.id}/availability`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

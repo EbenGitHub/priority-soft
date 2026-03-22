@@ -21,7 +21,8 @@ export default function PingPage() {
     // 2. Load System Ping
     const runPing = async () => {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/ping`);
+        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+        const res = await fetch(`${API_URL}/ping`);
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const data = await res.json();
         setBackendStatus(data);

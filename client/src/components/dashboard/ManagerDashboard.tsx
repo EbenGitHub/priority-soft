@@ -11,7 +11,8 @@ export default function ManagerDashboard({ user }: { user: any }) {
     const fetchStaff = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/users/location/${selectedLoc}`);
+        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+        const res = await fetch(`${API_URL}/users/location/${selectedLoc}`);
         if(res.ok) setStaff(await res.json());
       } catch (err) {
         console.error(err);

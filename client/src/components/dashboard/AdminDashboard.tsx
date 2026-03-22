@@ -5,9 +5,10 @@ export default function AdminDashboard({ user }: { user: any }) {
   const [locations, setLocations] = useState<any[]>([]);
   
   useEffect(() => {
+    const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
     Promise.all([
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}/users`).then(r => r.json()),
-      fetch(`${process.env.NEXT_PUBLIC_API_URL}/locations`).then(r => r.json())
+      fetch(`${API_URL}/users`).then(r => r.json()),
+      fetch(`${API_URL}/locations`).then(r => r.json())
     ]).then(([uData, lData]) => {
       setUsers(uData);
       setLocations(lData);
