@@ -9,6 +9,7 @@ import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationPreference } from '../notifications/entities/notification-preference.entity';
 import { AuditLog } from '../audit/entities/audit-log.entity';
 import { Shift } from '../shifts/entities/shift.entity';
+import { SwapRequest } from '../swaps/entities/swap.entity';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { Shift } from '../shifts/entities/shift.entity';
       NotificationPreference,
       AuditLog,
       Shift,
+      SwapRequest,
     ]),
   ],
   providers: [SeedService],
