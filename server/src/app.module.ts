@@ -8,6 +8,7 @@ import { LocationsModule } from './locations/locations.module';
 import { SeedModule } from './seed/seed.module';
 import { ShiftsModule } from './shifts/shifts.module';
 import { SwapsModule } from './swaps/swaps.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { SwapsModule } from './swaps/swaps.module';
     SeedModule,
     ShiftsModule,
     SwapsModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

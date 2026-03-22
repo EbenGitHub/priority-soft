@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Location, Skill, Shift, Staff } from '../../../lib/mockData';
 import { validateAssignment, ValidationResult } from '../../../lib/schedulingRules';
+import { FairnessAnalytics } from '../../../lib/fairnessMetrics';
 
 export default function SchedulingPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -20,6 +21,7 @@ export default function SchedulingPage() {
   const [newShiftSkill, setNewShiftSkill] = useState('');
 
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
+  const [fairnessData, setFairnessData] = useState<FairnessAnalytics | null>(null);
 
   useEffect(() => {
     const initData = async () => {
@@ -64,8 +66,20 @@ export default function SchedulingPage() {
     }
   };
 
+  const fetchFairness = async () => {
+    if (!selectedLocation) return;
+    try {
+      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(`${API_URL}/analytics/fairness?locationId=${selectedLocation}`);
+      if (res.ok) setFairnessData(await res.json());
+    } catch(err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchShifts();
+    fetchFairness();
   }, [selectedLocation]);
 
   const locShifts = shifts.filter(s => s.location?.id === selectedLocation);
@@ -87,6 +101,7 @@ export default function SchedulingPage() {
       });
       if (res.ok) {
          await fetchShifts();
+         await fetchFairness();
          setShowShiftModal(false);
       } else {
          alert('Failed to construct shift slot over database network');
@@ -127,6 +142,7 @@ export default function SchedulingPage() {
       }
       
       await fetchShifts();
+      await fetchFairness();
       setValidationData(null);
       setAssignModalShift(null);
     } catch (e) {
@@ -148,6 +164,7 @@ export default function SchedulingPage() {
         return;
       }
       fetchShifts();
+      fetchFairness();
     } catch (err) {
       console.error(err);
     }
@@ -229,6 +246,70 @@ export default function SchedulingPage() {
                      )}
                   </div>
                ))}
+            </div>
+         </div>
+      )}
+
+      {/* Schedule Fairness Analytics */}
+      {fairnessData && fairnessData.totalPremiumShifts > 0 && (
+         <div className="bg-slate-800 rounded-[2rem] border border-slate-700 shadow-xl overflow-hidden p-8 mb-8 relative">
+            <div className="absolute top-0 right-0 w-96 h-96 bg-fuchsia-500/5 blur-3xl rounded-full translate-x-1/2 -translate-y-1/2"></div>
+            <div className="flex justify-between items-center mb-6 relative z-10">
+               <h3 className="text-2xl font-bold flex items-center gap-3">
+                  Fairness & Equity Distribution
+                  <span className="bg-fuchsia-500/10 text-fuchsia-400 text-[10px] font-bold tracking-widest uppercase border border-fuchsia-500/20 px-3 py-1 rounded-md">Live Analytics</span>
+               </h3>
+               <div className="flex items-center gap-4">
+                  <div className="text-right">
+                     <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mb-0.5">Distribution Equity Grade</p>
+                     <p className={`font-mono text-3xl font-extrabold ${fairnessData.overallScore >= 90 ? 'text-emerald-400' : fairnessData.overallScore >= 70 ? 'text-amber-400' : 'text-rose-400'}`}>
+                        {fairnessData.overallScore}%
+                     </p>
+                  </div>
+               </div>
+            </div>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 relative z-10">
+               <div className="bg-slate-900 border border-slate-700 rounded-[1.5rem] p-5">
+                  <p className="text-xs uppercase tracking-widest font-bold text-slate-500 mb-4 flex justify-between">
+                     <span>Premium Shift Allocation</span>
+                     <span className="text-fuchsia-400">Total: {fairnessData.totalPremiumShifts}</span>
+                  </p>
+                  <div className="space-y-3">
+                     {fairnessData.staffMetrics.filter(m => m.premiumShifts > 0).map(m => (
+                        <div key={m.staff.id} className="flex items-center gap-4">
+                           <p className="w-32 font-bold text-sm truncate">{m.staff.name}</p>
+                           <div className="flex-1 bg-slate-800 h-3 rounded-full overflow-hidden border border-slate-700">
+                               <div className="bg-fuchsia-500 h-full rounded-full transition-all duration-1000" style={{ width: `${(m.premiumShifts / fairnessData.totalPremiumShifts) * 100}%` }}></div>
+                           </div>
+                           <p className="font-mono text-xs w-8 text-right text-slate-400">{m.premiumShifts}</p>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+
+               <div className="bg-slate-900 border border-slate-700 rounded-[1.5rem] p-5">
+                  <p className="text-xs uppercase tracking-widest font-bold text-slate-500 mb-4 flex justify-between">
+                     <span>Target Hours Fulfillment</span>
+                  </p>
+                  <div className="space-y-3 max-h-48 overflow-y-auto custom-scrollbar pr-2">
+                     {fairnessData.staffMetrics.map(m => (
+                        <div key={m.staff.id} className="flex justify-between items-center p-2 rounded-lg border border-slate-800 bg-slate-800/50 hover:bg-slate-800 transition-colors">
+                           <p className="font-bold text-sm truncate">{m.staff.name}</p>
+                           <div className="flex items-center gap-3">
+                              <p className="text-xs text-slate-400 font-mono tracking-widest uppercase">{m.assignedHours.toFixed(1)} / {m.targetHours}h</p>
+                              {m.hoursVariance < 0 ? (
+                                <p className="text-[10px] text-rose-400 font-bold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20 uppercase tracking-widest">{m.hoursVariance.toFixed(1)}h Under</p>
+                              ) : m.hoursVariance > 0 ? (
+                                <p className="text-[10px] text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 uppercase tracking-widest">+{m.hoursVariance.toFixed(1)}h Over</p>
+                              ) : (
+                                <p className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-widest">Target Met</p>
+                              )}
+                           </div>
+                        </div>
+                     ))}
+                  </div>
+               </div>
             </div>
          </div>
       )}
