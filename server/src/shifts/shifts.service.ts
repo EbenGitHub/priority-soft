@@ -9,6 +9,7 @@ import { AvailabilityType } from '../users/enums/availability-type.enum';
 import { SwapRequest } from '../swaps/entities/swap.entity';
 import { EventsGateway } from '../events/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { availabilityContainsShift, buildShiftUtcRange, getLocalDateKey, getShiftUtcRange } from '../calendar/calendar-time.util';
 
 @Injectable()
 export class ShiftsService {
@@ -26,6 +27,7 @@ export class ShiftsService {
     const loc = await this.locRepo.findOneBy({ id: data.locationId });
     const skill = await this.skillRepo.findOneBy({ id: data.requiredSkillId });
     if (!loc || !skill) throw new NotFoundException('Invalid location or skill');
+    const timing = buildShiftUtcRange(data.date, data.startTime, data.endTime, loc.timezone);
 
     const shift = this.shiftRepo.create({
       location: loc,
@@ -33,6 +35,9 @@ export class ShiftsService {
       date: data.date,
       startTime: data.startTime,
       endTime: data.endTime,
+      startUtc: timing.startUtc,
+      endUtc: timing.endUtc,
+      isOvernight: timing.isOvernight,
       published: false,
     });
     const saved = await this.shiftRepo.save(shift);
@@ -55,19 +60,12 @@ export class ShiftsService {
     });
   }
 
-  private parseDateTime(dateStr: string, timeStr: string): number {
-    return new Date(`${dateStr}T${timeStr}`).getTime();
-  }
-
   private getDayOfWeek(dateStr: string): number {
     return new Date(`${dateStr}T12:00:00Z`).getUTCDay();
   }
 
   private getShiftDuration(shift: Shift): number {
-    if (!shift.startTime || !shift.endTime) return 0;
-    const start = this.parseDateTime(shift.date, shift.startTime);
-    const end = this.parseDateTime(shift.date, shift.endTime);
-    return (end - start) / (1000 * 60 * 60);
+    return getShiftUtcRange(shift).durationHours;
   }
 
   private async notifyManagersForLocation(locationId: string, payload: Parameters<NotificationsService['createForUsers']>[1]) {
@@ -124,7 +122,7 @@ export class ShiftsService {
   }
 
   public validateCutoff(shift: Shift) {
-    const shiftStart = this.parseDateTime(shift.date, shift.startTime);
+    const shiftStart = getShiftUtcRange(shift).startUtc.getTime();
     const now = Date.now();
     const diffHours = (shiftStart - now) / (1000 * 60 * 60);
     if (diffHours <= 48 && diffHours > -100) {
@@ -171,23 +169,20 @@ export class ShiftsService {
       throw new BadRequestException('Missing required specialized skill tag for this shift.');
     }
 
-    const shiftDay = this.getDayOfWeek(shift.date);
     let isAvailable = false;
 
     for (const avail of staff.availabilities) {
-      if (avail.type === AvailabilityType.EXCEPTION && avail.date === shift.date) {
-         if (shift.startTime >= avail.startTime && shift.endTime <= avail.endTime) isAvailable = true;
-      } else if (avail.type === AvailabilityType.RECURRING && avail.dayOfWeek === shiftDay) {
-         if (shift.startTime >= avail.startTime && shift.endTime <= avail.endTime) isAvailable = true;
-      }
+      if (availabilityContainsShift(avail, shift)) isAvailable = true;
+      if (isAvailable) break;
     }
 
     if (!isAvailable) {
       // throw new BadRequestException('Employee has not explicitly flagged availability for this specific timestamp.');
     }
 
-    const targetStart = this.parseDateTime(shift.date, shift.startTime);
-    const targetEnd = this.parseDateTime(shift.date, shift.endTime);
+    const targetRange = getShiftUtcRange(shift);
+    const targetStart = targetRange.startUtc.getTime();
+    const targetEnd = targetRange.endUtc.getTime();
 
     const allStaffShifts = await this.shiftRepo.find({
       where: { assignedStaff: { id: staff.id } }
@@ -195,8 +190,9 @@ export class ShiftsService {
 
     for (const existingShift of allStaffShifts) {
       if (existingShift.id === shift.id) continue;
-      const existingStart = this.parseDateTime(existingShift.date, existingShift.startTime);
-      const existingEnd = this.parseDateTime(existingShift.date, existingShift.endTime);
+      const existingRange = getShiftUtcRange(existingShift);
+      const existingStart = existingRange.startUtc.getTime();
+      const existingEnd = existingRange.endUtc.getTime();
 
       if (targetStart < existingEnd && targetEnd > existingStart) {
          throw new BadRequestException(`Overlaps completely with an existing shift (${existingShift.startTime}-${existingShift.endTime}).`);
@@ -214,7 +210,11 @@ export class ShiftsService {
     }
 
     // Phase 5 Labor Laws Integration Bound:
-    const dailyHours = allStaffShifts.filter(s => s.date === shift.date).reduce((acc, s) => acc + this.getShiftDuration(s), 0) + this.getShiftDuration(shift);
+    const shiftDayKey = getLocalDateKey(targetRange.startUtc, shift.location.timezone);
+    const dailyHours =
+      allStaffShifts
+        .filter((scheduledShift) => getLocalDateKey(getShiftUtcRange(scheduledShift).startUtc, scheduledShift.location?.timezone || shift.location.timezone) === shiftDayKey)
+        .reduce((acc, s) => acc + this.getShiftDuration(s), 0) + this.getShiftDuration(shift);
     if (dailyHours > 12) {
       throw new BadRequestException(`Labor Law Block: Exceeds 12 active hours in a single deployment cycle.`);
     }
@@ -276,6 +276,10 @@ export class ShiftsService {
     if (!assignedStaff) throw new NotFoundException('Staff member not found');
 
     shift.assignedStaff = assignedStaff;
+    const timing = buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, shift.location.timezone);
+    shift.startUtc = timing.startUtc;
+    shift.endUtc = timing.endUtc;
+    shift.isOvernight = timing.isOvernight;
     const saved = await this.shiftRepo.save(shift);
     this.eventsGateway.emitScheduleUpdate();
 

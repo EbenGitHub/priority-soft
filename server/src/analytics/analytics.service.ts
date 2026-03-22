@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { Shift } from '../shifts/entities/shift.entity';
 import { Role } from '../users/enums/role.enum';
+import { getShiftUtcRange } from '../calendar/calendar-time.util';
 
 @Injectable()
 export class AnalyticsService {
@@ -40,9 +41,7 @@ export class AnalyticsService {
 
           pShifts.forEach(s => {
               if (s.startTime && s.endTime) {
-                 const strt = new Date(`${s.date}T${s.startTime}`).getTime();
-                 const nd = new Date(`${s.date}T${s.endTime}`).getTime();
-                 hrs += (nd - strt) / (1000 * 60 * 60);
+                 hrs += getShiftUtcRange(s).durationHours;
               }
               if (isPremium(s)) {
                  premiumCount++;

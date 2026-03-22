@@ -20,6 +20,15 @@ export class Shift {
   @Column({ type: 'time' })
   endTime: string;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  startUtc: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  endUtc: Date | null;
+
+  @Column({ default: false })
+  isOvernight: boolean;
+
   @ManyToOne(() => Skill, { onDelete: 'RESTRICT' })
   requiredSkill: Skill;
 

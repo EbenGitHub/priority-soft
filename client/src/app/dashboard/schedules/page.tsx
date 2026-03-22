@@ -5,6 +5,8 @@ import { Location, Skill, Shift, Staff } from '../../../lib/mockData';
 import { validateAssignment, ValidationResult } from '../../../lib/schedulingRules';
 import { FairnessAnalytics } from '../../../lib/fairnessMetrics';
 import { useRealtime } from '../../../lib/useRealtime';
+import { fetchCalendarShifts, previewShiftTiming } from '../../../lib/calendarApi';
+import { buildShiftUtcRange, getShiftTiming, isShiftActive } from '../../../lib/calendarTime';
 
 export default function SchedulingPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -20,6 +22,19 @@ export default function SchedulingPage() {
   const [newShiftStart, setNewShiftStart] = useState('');
   const [newShiftEnd, setNewShiftEnd] = useState('');
   const [newShiftSkill, setNewShiftSkill] = useState('');
+  const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
+  const [shiftPreview, setShiftPreview] = useState<null | {
+    startUtc: string;
+    endUtc: string;
+    isOvernight: boolean;
+    durationHours: number;
+    locationDate: string;
+    locationTimeRange: string;
+    locationTimeZone: string;
+    viewerDate: string;
+    viewerTimeRange: string;
+    viewerTimeZone: string;
+  }>(null);
 
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
   const [fairnessData, setFairnessData] = useState<FairnessAnalytics | null>(null);
@@ -30,6 +45,10 @@ export default function SchedulingPage() {
      fetchShifts();
      fetchFairness();
   });
+
+  useEffect(() => {
+    setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  }, []);
 
   useEffect(() => {
     const initData = async () => {
@@ -64,13 +83,34 @@ export default function SchedulingPage() {
 
   const fetchShifts = async () => {
     try {
-      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-      const res = await fetch(`${API_URL}/shifts`);
-      if (res.ok) {
-         setShifts(await res.json());
-      }
+      const calendarShifts = await fetchCalendarShifts({ viewerTimeZone });
+      setShifts(calendarShifts);
     } catch(err) {
-      console.error(err);
+      try {
+        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+        const res = await fetch(`${API_URL}/shifts`);
+        if (res.ok) {
+          const rawShifts = (await res.json()) as Shift[];
+          setShifts(
+            rawShifts.map((shift) => {
+              const derived = buildShiftUtcRange(
+                shift.date,
+                shift.startTime,
+                shift.endTime,
+                shift.location?.timezone || 'UTC',
+              );
+              return {
+                ...shift,
+                startUtc: derived.startUtc.toISOString(),
+                endUtc: derived.endUtc.toISOString(),
+                isOvernight: derived.isOvernight,
+              };
+            }),
+          );
+        }
+      } catch (fallbackError) {
+        console.error(fallbackError);
+      }
     }
   };
 
@@ -88,7 +128,63 @@ export default function SchedulingPage() {
   useEffect(() => {
     fetchShifts();
     fetchFairness();
-  }, [selectedLocation]);
+  }, [selectedLocation, viewerTimeZone]);
+
+  useEffect(() => {
+    async function loadPreview() {
+      const location = locations.find((item) => item.id === selectedLocation);
+      if (!location || !newShiftDate || !newShiftStart || !newShiftEnd) {
+        setShiftPreview(null);
+        return;
+      }
+
+      try {
+        const preview = await previewShiftTiming({
+          locationId: selectedLocation,
+          date: newShiftDate,
+          startTime: `${newShiftStart}:00`,
+          endTime: `${newShiftEnd}:00`,
+          viewerTimeZone,
+        });
+        setShiftPreview(preview);
+      } catch {
+        const fallback = buildShiftUtcRange(
+          newShiftDate,
+          `${newShiftStart}:00`,
+          `${newShiftEnd}:00`,
+          location.timezone,
+        );
+        const fallbackShift = {
+          id: 'preview',
+          location,
+          date: newShiftDate,
+          startTime: `${newShiftStart}:00`,
+          endTime: `${newShiftEnd}:00`,
+          startUtc: fallback.startUtc.toISOString(),
+          endUtc: fallback.endUtc.toISOString(),
+          isOvernight: fallback.isOvernight,
+          requiredSkill: skills.find((skill) => skill.id === newShiftSkill) || null,
+          assignedStaff: null,
+          published: false,
+        } as Shift;
+        const timing = getShiftTiming(fallbackShift, viewerTimeZone);
+        setShiftPreview({
+          startUtc: timing.startUtc.toISOString(),
+          endUtc: timing.endUtc.toISOString(),
+          isOvernight: timing.isOvernight,
+          durationHours: timing.durationHours,
+          locationDate: timing.locationDate,
+          locationTimeRange: timing.locationTimeRange,
+          locationTimeZone: timing.locationTimeZone,
+          viewerDate: timing.viewerDate,
+          viewerTimeRange: timing.viewerTimeRange,
+          viewerTimeZone: timing.viewerTimeZone,
+        });
+      }
+    }
+
+    loadPreview();
+  }, [locations, newShiftDate, newShiftEnd, newShiftSkill, newShiftStart, selectedLocation, skills, viewerTimeZone]);
 
   const locShifts = shifts.filter(s => s.location?.id === selectedLocation);
 
@@ -204,10 +300,7 @@ export default function SchedulingPage() {
   const projectedLaborDash = staffList.map(staff => {
       const pShifts = shifts.filter(s => s.assignedStaff?.id === staff.id);
       const hours = pShifts.reduce((acc, s) => {
-          if (!s.startTime || !s.endTime) return acc;
-          const strt = new Date(`${s.date}T${s.startTime}`).getTime();
-          const nd = new Date(`${s.date}T${s.endTime}`).getTime();
-          return acc + ((nd - strt) / (1000 * 60 * 60));
+          return acc + getShiftTiming(s, viewerTimeZone).durationHours;
       }, 0);
       const overtimeHours = Math.max(0, hours - 40);
       const otCost = overtimeHours * 25.50 * 1.5; // Benchmark standard 1.5x Premium Rate
@@ -216,14 +309,7 @@ export default function SchedulingPage() {
 
   // Phase 7.1: On-Duty Live Computation
   const now = new Date();
-  const currentDateISO = now.toISOString().split('T')[0];
-  const currentTimeStr = now.toTimeString().slice(0, 5); // "HH:MM"
-
-  const onDutyShifts = shifts.filter(s => {
-      if (s.date !== currentDateISO) return false;
-      if (!s.assignedStaff) return false;
-      return s.startTime <= currentTimeStr && s.endTime >= currentTimeStr;
-  });
+  const onDutyShifts = shifts.filter((shift) => shift.assignedStaff && isShiftActive(shift, now));
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in-up text-white font-sans">
@@ -237,6 +323,7 @@ export default function SchedulingPage() {
             </span>
           </div>
           <p className="text-slate-400 text-lg">Build, validate and publish weekly configurations across Live Server API bounds.</p>
+          <p className="text-xs text-slate-500 mt-2 font-mono">Viewer timezone: {viewerTimeZone} • Last sync: {new Date(lastSync).toLocaleTimeString()}</p>
         </div>
         <button 
           onClick={() => setShowShiftModal(true)}
@@ -257,6 +344,9 @@ export default function SchedulingPage() {
              
              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
                 {onDutyShifts.map(shift => (
+                  (() => {
+                    const timing = getShiftTiming(shift, viewerTimeZone);
+                    return (
                    <div key={`duty-${shift.id}`} className="bg-slate-900 border border-emerald-500/40 p-4 rounded-2xl flex items-center justify-between shadow-lg hover:border-emerald-400 transition-colors">
                       <div>
                          <p className="font-bold text-white text-sm mb-1">{shift.assignedStaff?.name}</p>
@@ -264,9 +354,11 @@ export default function SchedulingPage() {
                       </div>
                       <div className="text-right">
                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Shift Ends</p>
-                         <p className="font-mono font-bold text-emerald-300">{shift.endTime.slice(0,5)}</p>
+                         <p className="font-mono font-bold text-emerald-300">{timing.locationTimeRange.split(' - ')[1]}</p>
                       </div>
                    </div>
+                    );
+                  })()
                 ))}
              </div>
           </div>
@@ -404,17 +496,25 @@ export default function SchedulingPage() {
             {locShifts.map(shift => {
               const assigned = shift.assignedStaff;
               const skill = shift.requiredSkill;
+              const timing = getShiftTiming(shift, viewerTimeZone);
               
               return (
                 <div key={shift.id} className="bg-slate-900 border border-slate-700 p-6 rounded-[1.5rem] flex flex-col justify-between group hover:border-slate-500 transition-colors shadow-lg">
                   <div className="mb-6">
                     <div className="flex justify-between items-start mb-2">
-                       <p className="font-mono text-sm text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{shift.date}</p>
+                       <div className="flex flex-col gap-2">
+                         <p className="font-mono text-sm text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{timing.locationDate}</p>
+                         {timing.isOvernight && (
+                           <span className="w-fit text-[10px] uppercase tracking-widest font-bold bg-violet-500/10 text-violet-300 border border-violet-500/30 px-2 py-1 rounded-md">Overnight</span>
+                         )}
+                       </div>
                        <button onClick={()=>togglePublishState(shift.id)} className={`text-xs px-2 py-1 flex items-center border rounded-lg font-bold transition-colors ${shift.published ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'}`}>
                          {shift.published ? 'PUBLISHED' : 'DRAFT (DEPLOY)'}
                        </button>
                     </div>
-                    <p className="font-extrabold text-2xl tracking-tighter mb-2">{shift.startTime.slice(0,5)} <span className="text-slate-500 font-normal">to</span> {shift.endTime.slice(0,5)}</p>
+                    <p className="font-extrabold text-2xl tracking-tighter mb-2">{timing.locationTimeRange}</p>
+                    <p className="text-xs text-slate-400 mb-3">{timing.locationTimeZone}</p>
+                    <p className="text-xs text-slate-500 mb-3">Your view: {timing.viewerDate} • {timing.viewerTimeRange}</p>
                     <span className="inline-block text-[11px] bg-slate-800 text-slate-300 border border-slate-600 px-2.5 py-1 rounded-md font-bold uppercase tracking-widest">{skill?.name} Required</span>
                   </div>
                   
@@ -447,7 +547,10 @@ export default function SchedulingPage() {
               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-800/50 shrink-0">
                  <div>
                    <h3 className="text-xl font-bold">Deploy Live Roster Match</h3>
-                   <p className="text-xs text-slate-400 mt-1 font-mono">{assignModalShift.date} • {assignModalShift.startTime} to {assignModalShift.endTime}</p>
+                   {(() => {
+                     const timing = getShiftTiming(assignModalShift, viewerTimeZone);
+                     return <p className="text-xs text-slate-400 mt-1 font-mono">{timing.locationDate} • {timing.locationTimeRange} ({timing.locationTimeZone})</p>;
+                   })()}
                  </div>
                  <button onClick={() => setAssignModalShift(null)} className="h-10 w-10 bg-slate-800 flex items-center justify-center rounded-full hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors">✕</button>
               </div>
@@ -535,6 +638,19 @@ export default function SchedulingPage() {
                       {skills.map(sk => <option key={sk.id} value={sk.id}>{sk.name}</option>)}
                     </select>
                  </div>
+                 {shiftPreview && (
+                   <div className="rounded-2xl border border-slate-700 bg-slate-950 p-4 space-y-2">
+                     <div className="flex items-center justify-between">
+                       <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Time Preview</p>
+                       {shiftPreview.isOvernight && <span className="text-[10px] uppercase tracking-widest font-bold bg-violet-500/10 text-violet-300 border border-violet-500/30 px-2 py-1 rounded-md">Overnight</span>}
+                     </div>
+                     <p className="text-sm text-white font-semibold">{shiftPreview.locationDate} • {shiftPreview.locationTimeRange}</p>
+                     <p className="text-xs text-slate-400">{shiftPreview.locationTimeZone}</p>
+                     <p className="text-xs text-slate-500">Viewer: {shiftPreview.viewerDate} • {shiftPreview.viewerTimeRange} ({shiftPreview.viewerTimeZone})</p>
+                     <p className="text-xs text-slate-500">UTC: {new Date(shiftPreview.startUtc).toISOString()} → {new Date(shiftPreview.endUtc).toISOString()}</p>
+                     <p className="text-xs text-emerald-400 font-mono">{shiftPreview.durationHours.toFixed(1)}h total</p>
+                   </div>
+                 )}
                  
                  <div className="pt-4">
                     <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 font-bold py-3.5 rounded-xl shadow-[0_0_15px_rgba(37,99,235,0.3)] border border-blue-500 transition-all hover:-translate-y-0.5">Push Query to Database</button>

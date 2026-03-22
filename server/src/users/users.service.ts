@@ -70,6 +70,7 @@ export class UsersService {
 
     const newAvail = this.availabilityRepository.create({
       ...data,
+      timezone: data.timezone || user.locations[0]?.timezone || 'UTC',
       user,
     });
     const saved = await this.availabilityRepository.save(newAvail);

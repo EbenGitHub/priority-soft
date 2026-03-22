@@ -1,4 +1,5 @@
 import { Staff, Shift } from './mockData';
+import { buildShiftUtcRange, getShiftTiming, getLocalDateKeyForUtc } from './calendarTime';
 
 export interface ValidationResult {
   valid: boolean;
@@ -8,20 +9,12 @@ export interface ValidationResult {
   requiresOverride?: boolean;
 }
 
-function parseDateTime(dateStr: string, timeStr: string): Date {
-  const formattedTime = timeStr?.length === 5 ? `${timeStr}:00` : timeStr;
-  return new Date(`${dateStr}T${formattedTime || '00:00:00'}`);
-}
-
 function getDayOfWeek(dateStr: string): number {
   return new Date(`${dateStr}T12:00:00`).getDay(); // 0 = Sunday
 }
 
 function getShiftDuration(shift: Shift): number {
-  if (!shift.startTime || !shift.endTime) return 0;
-  const start = parseDateTime(shift.date, shift.startTime).getTime();
-  const end = parseDateTime(shift.date, shift.endTime).getTime();
-  return (end - start) / (1000 * 60 * 60);
+  return getShiftTiming(shift, 'UTC').durationHours;
 }
 
 function calculateConsecutiveDays(shifts: Shift[], newShift: Shift): number {
@@ -61,6 +54,7 @@ export function validateAssignment(
 ): ValidationResult {
   const warnings: string[] = [];
   let requiresOverride = false;
+  void allStaff;
   
   if (!targetShift.location || !staff.locations?.some(l => l.id === targetShift.location.id)) {
     return { valid: false, reason: `Staff member is not certified to work at this location.` };
@@ -70,34 +64,65 @@ export function validateAssignment(
     return { valid: false, reason: `Missing required specialized skill tag for this shift.` };
   }
 
-  const shiftDay = getDayOfWeek(targetShift.date);
   let isAvailable = false;
-  const fmtTargetStart = targetShift.startTime.slice(0, 5);
-  const fmtTargetEnd = targetShift.endTime.slice(0, 5);
+  const targetTiming = getShiftTiming(targetShift, 'UTC');
 
   for (const avail of staff.availabilities || []) {
-    const fmtAvailStart = avail.startTime.slice(0, 5);
-    const fmtAvailEnd = avail.endTime.slice(0, 5);
-    if (avail.type === 'EXCEPTION' && avail.date === targetShift.date) {
-        if (fmtTargetStart >= fmtAvailStart && fmtTargetEnd <= fmtAvailEnd) isAvailable = true;
-    } else if (avail.type === 'RECURRING' && avail.dayOfWeek === shiftDay) {
-        if (fmtTargetStart >= fmtAvailStart && fmtTargetEnd <= fmtAvailEnd) isAvailable = true;
+    const availabilityTimeZone =
+      avail.timezone || targetShift.location?.timezone || staff.locations?.[0]?.timezone || 'UTC';
+
+    const candidateDates =
+      avail.type === 'EXCEPTION' && avail.date
+        ? [avail.date]
+        : [
+            getLocalDateKeyForUtc(targetTiming.startUtc, availabilityTimeZone),
+            getLocalDateKeyForUtc(
+              new Date(targetTiming.startUtc.getTime() - 24 * 60 * 60 * 1000),
+              availabilityTimeZone,
+            ),
+          ];
+
+    for (const candidateDate of candidateDates) {
+      const availabilityWindow = buildShiftUtcRange(
+        candidateDate,
+        avail.startTime,
+        avail.endTime,
+        availabilityTimeZone,
+      );
+      const candidateDay = getDayOfWeek(candidateDate);
+      const matchesRule =
+        avail.type === 'EXCEPTION'
+          ? avail.date === candidateDate
+          : avail.dayOfWeek === candidateDay;
+
+      if (!matchesRule) continue;
+
+      if (
+        targetTiming.startUtc.getTime() >= availabilityWindow.startUtc.getTime() &&
+        targetTiming.endUtc.getTime() <= availabilityWindow.endUtc.getTime()
+      ) {
+        isAvailable = true;
+        break;
+      }
     }
+
+    if (isAvailable) break;
   }
 
   if (!isAvailable) {
     return { valid: false, reason: `Employee has not explicitly flagged availability for this specific timestamp.` };
   }
 
-  const targetStart = parseDateTime(targetShift.date, targetShift.startTime).getTime();
-  const targetEnd = parseDateTime(targetShift.date, targetShift.endTime).getTime();
+  const targetStart = targetTiming.startUtc.getTime();
+  const targetEnd = targetTiming.endUtc.getTime();
   
   const staffShifts = allShifts.filter(s => s.assignedStaff?.id === staff.id && s.id !== targetShift.id);
   
   for (const existingShift of staffShifts) {
     if (!existingShift.startTime || !existingShift.endTime) continue;
-    const existingStart = parseDateTime(existingShift.date, existingShift.startTime).getTime();
-    const existingEnd = parseDateTime(existingShift.date, existingShift.endTime).getTime();
+    const existingTiming = getShiftTiming(existingShift, 'UTC');
+    const existingStart = existingTiming.startUtc.getTime();
+    const existingEnd = existingTiming.endUtc.getTime();
     
     if (targetStart < existingEnd && targetEnd > existingStart) {
       return { valid: false, reason: `Overlaps completely with an existing shift (${existingShift.startTime.slice(0,5)}-${existingShift.endTime.slice(0,5)}).` };
@@ -116,7 +141,20 @@ export function validateAssignment(
   }
 
   // Phase 5: Overtime & Labor Cost Algorithms (Preflight)
-  const dailyHours = staffShifts.filter(s => s.date === targetShift.date).reduce((acc, s) => acc + getShiftDuration(s), 0) + getShiftDuration(targetShift);
+  const targetDateKey = getLocalDateKeyForUtc(
+    targetTiming.startUtc,
+    targetShift.location?.timezone || 'UTC',
+  );
+  const dailyHours =
+    staffShifts
+      .filter(
+        (shift) =>
+          getLocalDateKeyForUtc(
+            getShiftTiming(shift, 'UTC').startUtc,
+            shift.location?.timezone || 'UTC',
+          ) === targetDateKey,
+      )
+      .reduce((acc, s) => acc + getShiftDuration(s), 0) + getShiftDuration(targetShift);
   if (dailyHours > 12) {
       return { valid: false, reason: `Labor Law Violation: Cannot exceed 12 active hours in a single deployment cycle (${dailyHours}h target).` };
   } else if (dailyHours > 8) {

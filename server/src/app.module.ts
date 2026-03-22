@@ -11,6 +11,7 @@ import { SwapsModule } from './swaps/swaps.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { EventsModule } from './events/events.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { CalendarModule } from './calendar/calendar.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     AnalyticsModule,
     EventsModule,
     NotificationsModule,
+    CalendarModule,
   ],
   controllers: [AppController],
   providers: [AppService],

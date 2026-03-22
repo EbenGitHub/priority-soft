@@ -28,4 +28,7 @@ export class Availability {
 
   @Column({ type: 'time' })
   endTime: string;
+
+  @Column({ default: 'UTC' })
+  timezone: string;
 }

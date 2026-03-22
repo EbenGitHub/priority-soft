@@ -16,6 +16,7 @@ export interface Availability {
   type: 'RECURRING' | 'EXCEPTION';
   dayOfWeek?: number; // 0-6
   date?: string; // YYYY-MM-DD
+  timezone?: string;
   startTime: string; // HH:mm:ss
   endTime: string; // HH:mm:ss
 }
@@ -37,6 +38,9 @@ export interface Shift {
   date: string; // YYYY-MM-DD
   startTime: string; // HH:mm:ss
   endTime: string; // HH:mm:ss
+  startUtc?: string;
+  endUtc?: string;
+  isOvernight?: boolean;
   requiredSkill: Skill; 
   assignedStaff: Staff | null;
   published: boolean;

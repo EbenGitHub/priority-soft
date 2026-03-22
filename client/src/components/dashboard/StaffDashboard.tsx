@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { Shift, Staff } from '../../lib/mockData';
 import { validateAssignment } from '../../lib/schedulingRules';
+import { getShiftTiming } from '../../lib/calendarTime';
 
 interface SwapRequest {
   id: string;
@@ -18,6 +19,7 @@ export default function StaffDashboard({ user }: { user: any }) {
   const [swaps, setSwaps] = useState<SwapRequest[]>([]);
   const [allStaff, setAllStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
 
   const [showSwapModal, setShowSwapModal] = useState<Shift | null>(null);
   const [swapTargetId, setSwapTargetId] = useState('');
@@ -43,6 +45,10 @@ export default function StaffDashboard({ user }: { user: any }) {
        if (res.ok) setSwaps(await res.json());
      } catch (err) {}
   };
+
+  useEffect(() => {
+    setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  }, []);
 
   useEffect(() => {
     fetchLiveState();
@@ -132,12 +138,14 @@ export default function StaffDashboard({ user }: { user: any }) {
                  {myShifts.length === 0 && <p className="text-slate-500 italic py-5 text-center bg-slate-900 border border-slate-800 rounded-xl">No shifts assigned to your profile currently.</p>}
                  {myShifts.map(shift => {
                     const activeReq = swaps.find(s => s.initiatorShift?.id === shift.id && ['PENDING_PEER', 'PENDING_MANAGER'].includes(s.status));
+                    const timing = getShiftTiming(shift, viewerTimeZone);
                     return (
                       <div key={shift.id} className="bg-slate-900 border border-slate-700 p-5 rounded-[1.5rem] flex justify-between items-center group shadow-md transition-all hover:border-slate-500">
                          <div>
-                            <p className="font-mono text-emerald-400 text-sm mb-1 bg-emerald-500/10 inline-block px-2 rounded-md">{shift.date}</p>
-                            <p className="font-bold text-2xl tracking-tight mb-1">{shift.startTime.slice(0,5)} <span className="text-slate-500 font-normal">to</span> {shift.endTime.slice(0,5)}</p>
-                            <p className="text-xs text-slate-400">{shift.location?.name} • <span className="text-slate-300 font-bold">{shift.requiredSkill?.name}</span></p>
+                            <p className="font-mono text-emerald-400 text-sm mb-1 bg-emerald-500/10 inline-block px-2 rounded-md">{timing.locationDate}</p>
+                            <p className="font-bold text-2xl tracking-tight mb-1">{timing.locationTimeRange}</p>
+                            <p className="text-xs text-slate-400">{shift.location?.name} • {timing.locationTimeZone} • <span className="text-slate-300 font-bold">{shift.requiredSkill?.name}</span></p>
+                            <p className="text-[11px] text-slate-500 mt-1">Your time: {timing.viewerDate} • {timing.viewerTimeRange}</p>
                          </div>
                          <div>
                             {activeReq ? (
@@ -171,6 +179,8 @@ export default function StaffDashboard({ user }: { user: any }) {
                  {incomingSwaps.map(req => {
                     const fromShift = shifts.find(s => s.id === req.initiatorShift?.id);
                     const toShift = shifts.find(s => s.id === req.targetShift?.id);
+                    const fromTiming = fromShift ? getShiftTiming(fromShift, viewerTimeZone) : null;
+                    const toTiming = toShift ? getShiftTiming(toShift, viewerTimeZone) : null;
                     return (
                         <div key={req.id} className="bg-blue-900/20 border border-blue-500/30 p-5 rounded-[1.5rem] shadow-sm transform transition-all hover:scale-[1.01]">
                            <div className="flex justify-between items-start mb-2">
@@ -179,8 +189,8 @@ export default function StaffDashboard({ user }: { user: any }) {
                            </div>
                            <p className="text-base font-bold mb-3"><span className="text-blue-300">{req.initiatorUser?.name}</span> has requested to swap shifts with you!</p>
                            <div className="bg-slate-950 p-4 rounded-xl text-xs font-mono text-slate-300 mb-5 border border-slate-800 flex flex-col gap-2">
-                             <div className="flex justify-between"><span className="text-slate-500">Their Shift:</span> <span className="text-emerald-400">{fromShift?.date} @ {fromShift?.startTime.slice(0,5)}</span></div>
-                             <div className="flex justify-between"><span className="text-slate-500">Your Shift:</span> <span className="text-blue-400">{toShift?.date} @ {toShift?.startTime.slice(0,5)}</span></div>
+                             <div className="flex justify-between"><span className="text-slate-500">Their Shift:</span> <span className="text-emerald-400">{fromTiming?.locationDate} @ {fromTiming?.locationTimeRange}</span></div>
+                             <div className="flex justify-between"><span className="text-slate-500">Your Shift:</span> <span className="text-blue-400">{toTiming?.locationDate} @ {toTiming?.locationTimeRange}</span></div>
                            </div>
                            <div className="flex gap-3">
                              <button onClick={() => handleAction(req.id, 'decline')} className="flex-1 bg-transparent text-slate-400 border border-slate-600 py-2.5 rounded-xl hover:text-white hover:bg-slate-700 font-bold text-sm transition-all">Decline</button>
@@ -215,6 +225,7 @@ export default function StaffDashboard({ user }: { user: any }) {
              {coverageDrops.map(req => {
                 const shift = shifts.find(s => s.id === req.initiatorShift?.id);
                 if (!shift) return null;
+                const timing = getShiftTiming(shift, viewerTimeZone);
                 return (
                   <div key={req.id} className="bg-slate-900 border border-slate-700 p-6 rounded-[1.5rem] flex flex-col justify-between hover:border-blue-500/50 transition-colors shadow-xl group">
                      <div>
@@ -222,8 +233,9 @@ export default function StaffDashboard({ user }: { user: any }) {
                            <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-widest shadow-sm">{req.initiatorUser?.name} Dropped</span>
                            <span className="text-slate-500 text-xs font-mono bg-slate-800 px-2 py-1 rounded-md border border-slate-700">{shift.location?.name}</span>
                         </div>
-                        <p className="font-extrabold text-2xl tracking-tighter mb-1">{shift.startTime.slice(0,5)} <span className="text-slate-500 font-normal">to</span> {shift.endTime.slice(0,5)}</p>
-                        <p className="text-sm text-emerald-400 font-mono mb-6">{shift.date}</p>
+                        <p className="font-extrabold text-2xl tracking-tighter mb-1">{timing.locationTimeRange}</p>
+                        <p className="text-sm text-emerald-400 font-mono">{timing.locationDate}</p>
+                        <p className="text-xs text-slate-500 mb-6">{timing.locationTimeZone} • Your time: {timing.viewerTimeRange}</p>
                      </div>
                      <button onClick={() => {
                         const check = validateAssignment(user, shift, shifts, allStaff);

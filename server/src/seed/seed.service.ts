@@ -106,7 +106,8 @@ export class SeedService implements OnApplicationBootstrap {
         type: AvailabilityType.RECURRING,
         dayOfWeek: day,
         startTime: '09:00:00',
-        endTime: '17:00:00'
+        endTime: '17:00:00',
+        timezone: loc1.timezone,
       });
     }
 
@@ -117,7 +118,8 @@ export class SeedService implements OnApplicationBootstrap {
         type: AvailabilityType.RECURRING,
         dayOfWeek: day,
         startTime: '16:00:00',
-        endTime: '23:59:59' 
+        endTime: '23:59:59',
+        timezone: loc3.timezone,
       });
     }
 
@@ -128,6 +130,7 @@ export class SeedService implements OnApplicationBootstrap {
       date: '2026-12-31',
       startTime: '10:00:00',
       endTime: '22:00:00',
+      timezone: loc1.timezone,
     });
 
     await this.preferenceRepository.save([
