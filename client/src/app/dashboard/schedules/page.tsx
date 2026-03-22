@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Location, Skill, Shift, Staff } from '../../../lib/mockData';
 import { validateAssignment, ValidationResult } from '../../../lib/schedulingRules';
 import { FairnessAnalytics } from '../../../lib/fairnessMetrics';
+import { useRealtime } from '../../../lib/useRealtime';
 
 export default function SchedulingPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -22,6 +23,13 @@ export default function SchedulingPage() {
 
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
   const [fairnessData, setFairnessData] = useState<FairnessAnalytics | null>(null);
+  
+  // Phase 7: Real-Time Sync Hook mapping to local re-renders
+  const { isConnected, lastSync } = useRealtime(() => {
+     // Re-triggering data arrays logically to simulate push mutations and progress clocks.
+     fetchShifts();
+     fetchFairness();
+  });
 
   useEffect(() => {
     const initData = async () => {
@@ -136,7 +144,12 @@ export default function SchedulingPage() {
       
       if (!res.ok) {
          const errData = await res.json();
-         // If Phase 5.2 backend forces override requirement strictly via 409...
+         // Phase 7 Constraint: Gracefully catch 409 Optimistic Concurrency Lock Exceptions natively!
+         if (res.status === 409 && errData.message?.includes('Lock')) {
+             setValidationData({ valid: false, reason: 'CONCURRENCY LOCK ENGAGED: Another manager has already mutated this shift entity fractions of a second ago. The remote DOM is being forcefully re-synced.' });
+             await fetchShifts();
+             return;
+         }
          setValidationData({ valid: false, reason: errData.message || 'Database rejected assignment.' });
          return;
       }
@@ -201,12 +214,29 @@ export default function SchedulingPage() {
       return { staff, hours, overtimeHours, otCost };
   }).filter(d => d.hours > 0).sort((a,b) => b.hours - a.hours);
 
+  // Phase 7.1: On-Duty Live Computation
+  const now = new Date();
+  const currentDateISO = now.toISOString().split('T')[0];
+  const currentTimeStr = now.toTimeString().slice(0, 5); // "HH:MM"
+
+  const onDutyShifts = shifts.filter(s => {
+      if (s.date !== currentDateISO) return false;
+      if (!s.assignedStaff) return false;
+      return s.startTime <= currentTimeStr && s.endTime >= currentTimeStr;
+  });
+
   return (
     <div className="max-w-7xl mx-auto animate-fade-in-up text-white font-sans">
       <header className="mb-8 flex flex-wrap justify-between items-center gap-4">
         <div>
-          <h2 className="text-4xl font-extrabold tracking-tight">Shift Scheduling Console</h2>
-          <p className="text-slate-400 mt-2 text-lg">Build, validate and publish weekly configurations across Live Server API bounds.</p>
+          <div className="flex items-center gap-4 mb-2">
+            <h2 className="text-4xl font-extrabold tracking-tight">Shift Scheduling Console</h2>
+            <span className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase border flex items-center gap-2 ${isConnected ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'}`}>
+               <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`}></span>
+               {isConnected ? 'Live Socket Connected' : 'Connecting Sync...'}
+            </span>
+          </div>
+          <p className="text-slate-400 text-lg">Build, validate and publish weekly configurations across Live Server API bounds.</p>
         </div>
         <button 
           onClick={() => setShowShiftModal(true)}
@@ -216,6 +246,32 @@ export default function SchedulingPage() {
         </button>
       </header>
       
+      {/* On-Duty Now Live Dashboard */}
+      {onDutyShifts.length > 0 && (
+          <div className="bg-emerald-950/20 rounded-[2rem] border border-emerald-500/30 shadow-2xl overflow-hidden p-8 mb-8 relative">
+             <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/5 blur-3xl rounded-full translate-x-1/2 -translate-y-1/2"></div>
+             <h3 className="text-2xl font-bold mb-6 flex items-center gap-3 relative z-10 text-emerald-50">
+                On-Duty Active Floor Tracker
+                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-bold tracking-widest uppercase border border-emerald-500/30 px-3 py-1 rounded-md animate-pulse">Monitoring Live Flow</span>
+             </h3>
+             
+             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
+                {onDutyShifts.map(shift => (
+                   <div key={`duty-${shift.id}`} className="bg-slate-900 border border-emerald-500/40 p-4 rounded-2xl flex items-center justify-between shadow-lg hover:border-emerald-400 transition-colors">
+                      <div>
+                         <p className="font-bold text-white text-sm mb-1">{shift.assignedStaff?.name}</p>
+                         <p className="text-[10px] text-emerald-400 font-mono tracking-widest uppercase">{shift.location?.name} • {shift.requiredSkill?.name}</p>
+                      </div>
+                      <div className="text-right">
+                         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Shift Ends</p>
+                         <p className="font-mono font-bold text-emerald-300">{shift.endTime.slice(0,5)}</p>
+                      </div>
+                   </div>
+                ))}
+             </div>
+          </div>
+      )}
+
       {/* Overtime & Compliance Dashboard */}
       {projectedLaborDash.length > 0 && (
          <div className="bg-slate-800 rounded-[2rem] border border-slate-700 shadow-2xl overflow-hidden p-8 mb-8 relative">

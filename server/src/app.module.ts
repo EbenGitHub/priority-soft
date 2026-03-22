@@ -9,6 +9,7 @@ import { SeedModule } from './seed/seed.module';
 import { ShiftsModule } from './shifts/shifts.module';
 import { SwapsModule } from './swaps/swaps.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { EventsModule } from './events/events.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     ShiftsModule,
     SwapsModule,
     AnalyticsModule,
+    EventsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

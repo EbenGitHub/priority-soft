@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, VersionColumn } from 'typeorm';
 import { Location } from '../../locations/entities/location.entity';
 import { Skill } from '../../users/entities/skill.entity';
 import { User } from '../../users/entities/user.entity';
@@ -28,4 +28,7 @@ export class Shift {
 
   @Column({ default: false })
   published: boolean;
+
+  @VersionColumn()
+  version: number;
 }

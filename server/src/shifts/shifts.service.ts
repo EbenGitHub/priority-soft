@@ -7,6 +7,7 @@ import { Location } from '../locations/entities/location.entity';
 import { Skill } from '../users/entities/skill.entity';
 import { AvailabilityType } from '../users/enums/availability-type.enum';
 import { SwapRequest } from '../swaps/entities/swap.entity';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class ShiftsService {
@@ -16,6 +17,7 @@ export class ShiftsService {
     @InjectRepository(Location) private readonly locRepo: Repository<Location>,
     @InjectRepository(Skill) private readonly skillRepo: Repository<Skill>,
     @InjectRepository(SwapRequest) private readonly swapRepo: Repository<SwapRequest>,
+    private readonly eventsGateway: EventsGateway,
   ) {}
 
   async createShift(data: { locationId: string; date: string; startTime: string; endTime: string; requiredSkillId: string }) {
@@ -31,7 +33,9 @@ export class ShiftsService {
       endTime: data.endTime,
       published: false,
     });
-    return this.shiftRepo.save(shift);
+    const saved = await this.shiftRepo.save(shift);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 
   async findAll() {
@@ -98,7 +102,9 @@ export class ShiftsService {
     if (shift.published) this.validateCutoff(shift);
 
     shift.published = !shift.published;
-    return this.shiftRepo.save(shift);
+    const saved = await this.shiftRepo.save(shift);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 
   async validateAssignment(shift: Shift, userId: string, overrideReason?: string) {
@@ -201,12 +207,16 @@ export class ShiftsService {
 
     if (userId === null) {
       shift.assignedStaff = null;
-      return this.shiftRepo.save(shift);
+      const saved = await this.shiftRepo.save(shift);
+      this.eventsGateway.emitScheduleUpdate();
+      return saved;
     }
 
     await this.validateAssignment(shift, userId, overrideReason);
 
     shift.assignedStaff = { id: userId } as User;
-    return this.shiftRepo.save(shift);
+    const saved = await this.shiftRepo.save(shift);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 }

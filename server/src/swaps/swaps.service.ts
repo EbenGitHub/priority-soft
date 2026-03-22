@@ -5,13 +5,15 @@ import { SwapRequest } from './entities/swap.entity';
 import { ShiftsService } from '../shifts/shifts.service';
 import { User } from '../users/entities/user.entity';
 import { Shift } from '../shifts/entities/shift.entity';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class SwapsService {
   constructor(
     @InjectRepository(SwapRequest)
     private swapRepo: Repository<SwapRequest>,
-    private shiftsService: ShiftsService
+    private shiftsService: ShiftsService,
+    private readonly eventsGateway: EventsGateway
   ) {}
 
   async expireOldDrops() {
@@ -56,7 +58,9 @@ export class SwapsService {
       targetShift: data.targetShiftId ? ({ id: data.targetShiftId } as Shift) : null,
       targetUser: data.targetUserId ? ({ id: data.targetUserId } as User) : null
     } as any);
-    return this.swapRepo.save(swap);
+    const saved = await this.swapRepo.save(swap);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 
   async acceptRequest(id: string, userId: string) {
@@ -73,14 +77,18 @@ export class SwapsService {
     }
 
     req.status = 'PENDING_MANAGER';
-    return this.swapRepo.save(req);
+    const saved = await this.swapRepo.save(req);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 
   async declineRequest(id: string) {
     const req = await this.swapRepo.findOneBy({ id });
     if (!req) return null;
     req.status = 'REJECTED';
-    return this.swapRepo.save(req);
+    const saved = await this.swapRepo.save(req);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 
   async approveRequest(id: string) {
@@ -96,13 +104,17 @@ export class SwapsService {
        await this.shiftsService.assignStaff(req.targetShift.id, req.initiatorUser.id);
     }
     req.status = 'APPROVED';
-    return this.swapRepo.save(req);
+    const saved = await this.swapRepo.save(req);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 
   async rejectRequest(id: string) {
     const req = await this.swapRepo.findOneBy({ id });
     if (!req) return null;
     req.status = 'REJECTED';
-    return this.swapRepo.save(req);
+    const saved = await this.swapRepo.save(req);
+    this.eventsGateway.emitScheduleUpdate();
+    return saved;
   }
 }
