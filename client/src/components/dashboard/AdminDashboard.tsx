@@ -55,9 +55,9 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
     setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
     Promise.all([
-      fetch(`${API_URL}/users`).then((response) => response.json()),
-      fetch(`${API_URL}/locations`).then((response) => response.json()),
-      fetch(`${API_URL}/shifts`).then((response) => response.json()),
+      fetch(`${API_URL}/users?actorId=${encodeURIComponent(user.id)}`).then((response) => response.json()),
+      fetch(`${API_URL}/locations?actorId=${encodeURIComponent(user.id)}`).then((response) => response.json()),
+      fetch(`${API_URL}/shifts?actorId=${encodeURIComponent(user.id)}`).then((response) => response.json()),
     ]).then(([usersData, locationsData, shiftsData]) => {
       setUsers(usersData);
       setLocations(locationsData);
@@ -185,7 +185,7 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
+        <div id="audit-export-console" className="dashboard-focus-target rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <h3 className="text-xl font-bold text-white">Audit Export Console</h3>
@@ -252,7 +252,7 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
+        <div id="operations-calendar" className="dashboard-focus-target rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
           <ScheduleCalendar
             shifts={calendarShifts}
             viewerTimeZone={viewerTimeZone}

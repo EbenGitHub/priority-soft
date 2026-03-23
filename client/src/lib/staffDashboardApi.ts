@@ -15,16 +15,29 @@ function getApiUrl(path: string) {
   return `${baseUrl}${path}`;
 }
 
+async function safeJson<T>(response: Response): Promise<T | null> {
+  if (!response.ok) return null;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchStaffDashboardState(userId: string) {
-  const [shiftsResponse, usersResponse, meResponse] = await Promise.all([
+  const [shiftsResult, usersResult, meResult] = await Promise.allSettled([
     fetch(getApiUrl(`/shifts?actorId=${encodeURIComponent(userId)}`)),
     fetch(getApiUrl('/users')),
     fetch(getApiUrl(`/users/${userId}`)),
   ]);
 
-  const shifts = shiftsResponse.ok ? ((await shiftsResponse.json()) as Shift[]) : [];
-  const staff = usersResponse.ok ? ((await usersResponse.json()) as Staff[]) : [];
-  const profile = meResponse.ok ? ((await meResponse.json()) as Staff) : null;
+  const shiftsResponse = shiftsResult.status === 'fulfilled' ? shiftsResult.value : null;
+  const usersResponse = usersResult.status === 'fulfilled' ? usersResult.value : null;
+  const meResponse = meResult.status === 'fulfilled' ? meResult.value : null;
+
+  const shifts = shiftsResponse ? ((await safeJson<Shift[]>(shiftsResponse)) || []) : [];
+  const staff = usersResponse ? ((await safeJson<Staff[]>(usersResponse)) || []) : [];
+  const profile = meResponse ? await safeJson<Staff>(meResponse) : null;
 
   return { shifts, staff, profile };
 }

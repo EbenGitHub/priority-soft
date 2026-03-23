@@ -274,3 +274,12 @@ textarea:disabled,
 .react-datepicker__triangle {
   display: none;
 }
+
+.dashboard-focus-target {
+  scroll-margin-top: 7rem;
+}
+
+.dashboard-focus-target:target {
+  border-color: rgba(34, 211, 238, 0.55);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18), 0 20px 45px rgba(8, 145, 178, 0.18);
+}

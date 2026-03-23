@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { getShiftTiming } from '../../lib/calendarTime';
 import { groupShiftCoverage } from '../../lib/shiftCoverage';
 import { forecastAssignmentImpact } from '../../lib/overtimeForecast';
+import { useRealtime } from '../../lib/useRealtime';
 
 interface SwapRequest {
   id: string;
@@ -40,10 +41,17 @@ export default function ManagerDashboard({ user }: { user: any }) {
       setLoading(true);
       try {
         const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-        const res = await fetch(`${API_URL}/users/location/${selectedLoc}`);
-        if(res.ok) setStaff(await res.json());
-      } catch (err) {}
-      setLoading(false);
+        const res = await fetch(`${API_URL}/users/location/${selectedLoc}?actorId=${encodeURIComponent(user.id)}`);
+        if (res.ok) {
+          setStaff(await res.json());
+        } else {
+          setStaff([]);
+        }
+      } catch (err) {
+        setStaff([]);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchStaff();
   }, [selectedLoc]);
@@ -52,7 +60,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
      try {
        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
        const [shRes, swRes] = await Promise.all([
-          fetch(`${API_URL}/shifts`),
+          fetch(`${API_URL}/shifts?actorId=${encodeURIComponent(user.id)}`),
           fetch(`${API_URL}/swaps`)
        ]);
        if (shRes.ok) setShifts(await shRes.json());
@@ -63,6 +71,10 @@ export default function ManagerDashboard({ user }: { user: any }) {
   useEffect(() => {
     loadApprovals();
   }, []);
+
+  useRealtime(() => {
+    loadApprovals();
+  });
 
   useEffect(() => {
     if (!selectedLoc) return;
@@ -214,7 +226,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
        </div>
 
        {selectedLoc && overtimeWatchlist.length > 0 && (
-         <div className="rounded-[2rem] border border-amber-500/20 bg-amber-500/5 p-8 shadow-2xl">
+         <div id="overtime-watchlist" className="dashboard-focus-target rounded-[2rem] border border-amber-500/20 bg-amber-500/5 p-8 shadow-2xl">
            <div className="mb-6 flex items-center justify-between gap-4">
              <div>
                <h3 className="text-2xl font-bold text-white">Overtime Watchlist</h3>
@@ -268,7 +280,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
        )}
 
        {selectedLoc && locationStaff.length > 0 && (
-         <div className="rounded-[2rem] border border-fuchsia-500/20 bg-fuchsia-500/5 p-8 shadow-2xl">
+         <div id="fairness-investigation" className="dashboard-focus-target rounded-[2rem] border border-fuchsia-500/20 bg-fuchsia-500/5 p-8 shadow-2xl">
            <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
              <div>
                <h3 className="text-2xl font-bold text-white">Fairness Investigation</h3>
@@ -371,7 +383,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
        
        {/* Live Approval Queue Panel */}
        {approvalQueue.length > 0 && (
-         <div className="bg-emerald-900/20 rounded-[2rem] border border-emerald-500/30 p-8 shadow-2xl">
+         <div id="approval-queue" className="dashboard-focus-target bg-emerald-900/20 rounded-[2rem] border border-emerald-500/30 p-8 shadow-2xl">
             <h3 className="text-2xl font-bold mb-6 text-emerald-400 flex items-center gap-3">
               Action Required: Approval Queue
               <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-500/30">{approvalQueue.length} Pending</span>

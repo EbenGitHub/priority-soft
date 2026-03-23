@@ -57,11 +57,11 @@ export function validateAssignment(
   void allStaff;
   
   if (!targetShift.location || !staff.locations?.some(l => l.id === targetShift.location.id)) {
-    return { valid: false, reason: `Staff member is not certified to work at this location.` };
+    return { valid: false, reason: `${staff.name} is not certified to work at ${targetShift.location?.name || 'this location'}.` };
   }
 
   if (!targetShift.requiredSkill || !staff.skills?.some(s => s.id === targetShift.requiredSkill.id)) {
-    return { valid: false, reason: `Missing required specialized skill tag for this shift.` };
+    return { valid: false, reason: `${staff.name} does not have the required skill for this shift (${targetShift.requiredSkill?.name || 'unknown skill'}).` };
   }
 
   let isAvailable = false;
@@ -114,7 +114,10 @@ export function validateAssignment(
   }
 
   if (!isAvailable) {
-    return { valid: false, reason: `Employee has not explicitly flagged availability for this specific timestamp.` };
+    return {
+      valid: false,
+      reason: `${staff.name} is unavailable for ${targetShift.date} ${targetShift.startTime.slice(0, 5)}-${targetShift.endTime.slice(0, 5)} at ${targetShift.location?.name || 'this location'}.`,
+    };
   }
 
   const targetStart = targetTiming.startUtc.getTime();
@@ -129,18 +132,21 @@ export function validateAssignment(
     const existingEnd = existingTiming.endUtc.getTime();
     
     if (targetStart < existingEnd && targetEnd > existingStart) {
-      return { valid: false, reason: `Overlaps completely with an existing shift (${existingShift.startTime.slice(0,5)}-${existingShift.endTime.slice(0,5)}).` };
+      return {
+        valid: false,
+        reason: `${staff.name} already has an overlapping shift on ${existingShift.date} from ${existingShift.startTime.slice(0, 5)}-${existingShift.endTime.slice(0, 5)}.`,
+      };
     }
 
     const hoursBetweenBefore = (targetStart - existingEnd) / (1000 * 60 * 60);
     const hoursBetweenAfter = (existingStart - targetEnd) / (1000 * 60 * 60);
 
     if (targetStart >= existingEnd && hoursBetweenBefore < 10) {
-      return { valid: false, reason: `Violates 10-hour rest compliance rule (Only rested ${hoursBetweenBefore.toFixed(1)} hours).` };
+      return { valid: false, reason: `${staff.name} would only get ${hoursBetweenBefore.toFixed(1)} hours of rest before this shift. The minimum rest rule is 10 hours.` };
     }
     
     if (targetEnd <= existingStart && hoursBetweenAfter < 10) {
-      return { valid: false, reason: `Violates 10-hour rest compliance rule (Next shift cuts rest to ${hoursBetweenAfter.toFixed(1)} hours).` };
+      return { valid: false, reason: `${staff.name} would only get ${hoursBetweenAfter.toFixed(1)} hours of rest before their next shift. The minimum rest rule is 10 hours.` };
     }
   }
 
@@ -160,7 +166,7 @@ export function validateAssignment(
       )
       .reduce((acc, s) => acc + getShiftDuration(s), 0) + getShiftDuration(targetShift);
   if (dailyHours > 12) {
-      return { valid: false, reason: `Labor Law Violation: Cannot exceed 12 active hours in a single deployment cycle (${dailyHours}h target).` };
+      return { valid: false, reason: `${staff.name} would exceed the 12-hour daily hard limit with this assignment.` };
   } else if (dailyHours > 8) {
       warnings.push(`Daily hours projecting ${dailyHours}h threshold (Over 8h is classified as Overtime).`);
   }

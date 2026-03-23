@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import DatePicker from 'react-datepicker';
 import { Availability, Shift, Staff } from '../../lib/mockData';
 import { validateAssignment } from '../../lib/schedulingRules';
@@ -82,6 +82,7 @@ export default function StaffDashboard({ user }: { user: any }) {
   });
 
   const fetchLiveState = async () => {
+    setLoading(true);
     try {
       const state = await fetchStaffDashboardState(user.id);
       setShifts(state.shifts);
@@ -89,9 +90,16 @@ export default function StaffDashboard({ user }: { user: any }) {
       if (state.profile) {
         setProfile(state.profile);
         syncFormFromProfile(state.profile);
+      } else {
+        setProfile(null);
       }
-    } catch(err) {}
-    setLoading(false);
+    } catch(err) {
+      setShifts([]);
+      setAllStaff([]);
+      setProfile(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const refreshSwaps = async () => {
@@ -129,7 +137,7 @@ export default function StaffDashboard({ user }: { user: any }) {
      const targetUser = allStaff.find(s => s.id === targetShift.assignedStaff?.id);
      if (!targetUser) return;
 
-     const initiatorCanWorkTarget = validateAssignment(user, targetShift, shifts, allStaff);
+     const initiatorCanWorkTarget = validateAssignment(currentStaff, targetShift, shifts, allStaff);
      const targetCanWorkInitiator = validateAssignment(targetUser, showSwapModal, shifts, allStaff);
 
      if (!initiatorCanWorkTarget.valid) {
@@ -184,17 +192,44 @@ export default function StaffDashboard({ user }: { user: any }) {
      }
   };
 
-  if (loading) return <div>Loading Profile Interface...</div>;
-
+  const currentStaff = profile || user;
   const myShifts = shifts.filter(s => s.assignedStaff?.id === user.id);
-  const swapOptions = shifts.filter(
-    (s) => s.assignedStaff && s.assignedStaff.id !== user.id && getShiftTiming(s, viewerTimeZone).startUtc.getTime() > Date.now(),
+  const activeSwapShiftIds = new Set(
+    swaps
+      .filter((request) => ['PENDING_PEER', 'PENDING_MANAGER'].includes(request.status))
+      .flatMap((request) => [request.initiatorShift?.id, request.targetShift?.id].filter(Boolean) as string[]),
   );
+  const swapOptions = useMemo(() => {
+    return shifts
+      .filter((shift) => {
+        if (!shift.published) return false;
+        if (!shift.assignedStaff || shift.assignedStaff.id === user.id) return false;
+        if (getShiftTiming(shift, viewerTimeZone).startUtc.getTime() <= Date.now()) return false;
+        if (activeSwapShiftIds.has(shift.id)) return false;
+        return true;
+      })
+      .filter((shift) => {
+        const targetUser = allStaff.find((staffMember) => staffMember.id === shift.assignedStaff?.id);
+        if (!targetUser || !showSwapModal) return false;
+
+        const initiatorCanWorkTarget = validateAssignment(currentStaff, shift, shifts, allStaff);
+        const targetCanWorkInitiator = validateAssignment(targetUser, showSwapModal, shifts, allStaff);
+
+        return initiatorCanWorkTarget.valid && targetCanWorkInitiator.valid;
+      });
+  }, [activeSwapShiftIds, allStaff, currentStaff, shifts, showSwapModal, user.id, viewerTimeZone]);
 
   const coverageDrops = swaps.filter(s => s.type === 'DROP' && s.status === 'PENDING_PEER' && s.initiatorUser?.id !== user.id);
   const incomingSwaps = swaps.filter(s => s.type === 'SWAP' && s.status === 'PENDING_PEER' && s.targetUser?.id === user.id);
+  const pendingManagerRequests = swaps.filter(
+    (request) =>
+      request.status === 'PENDING_MANAGER' &&
+      (request.initiatorUser?.id === user.id || request.targetUser?.id === user.id),
+  );
   const myUpdates = swaps.filter(s => s.initiatorUser?.id === user.id && ['APPROVED', 'REJECTED', 'CANCELLED'].includes(s.status));
   const weekdayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  if (loading) return <div>Loading Profile Interface...</div>;
 
   return (
     <div className="space-y-8 animate-fade-in-up">
@@ -351,12 +386,19 @@ export default function StaffDashboard({ user }: { user: any }) {
 
        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
            {/* My Shifts */}
-           <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6">
+           <div id="my-scheduled-shifts" className="dashboard-focus-target bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6">
               <h3 className="text-2xl font-bold mb-6 flex items-center gap-3">My Scheduled Shifts</h3>
               <div className="space-y-4 max-h-[400px] overflow-y-auto pr-3 custom-scrollbar">
                  {myShifts.length === 0 && <p className="text-slate-500 italic py-5 text-center bg-slate-900 border border-slate-800 rounded-xl">No shifts assigned to your profile currently.</p>}
                  {myShifts.map(shift => {
-                    const activeReq = swaps.find(s => s.initiatorShift?.id === shift.id && ['PENDING_PEER', 'PENDING_MANAGER'].includes(s.status));
+                    const activeReq = swaps.find(
+                      (s) =>
+                        ['PENDING_PEER', 'PENDING_MANAGER'].includes(s.status) &&
+                        (
+                          (s.initiatorShift?.id === shift.id && s.initiatorUser?.id === user.id) ||
+                          (s.targetShift?.id === shift.id && s.targetUser?.id === user.id)
+                        ),
+                    );
                     const timing = getShiftTiming(shift, viewerTimeZone);
                     return (
                       <div key={shift.id} className="bg-slate-900 border border-slate-700 p-5 rounded-[1.5rem] flex justify-between items-center group shadow-md transition-all hover:border-slate-500">
@@ -391,10 +433,10 @@ export default function StaffDashboard({ user }: { user: any }) {
            </div>
 
            {/* Inbox / Notifications Pane */}
-           <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6 flex flex-col">
+           <div id="notification-inbox" className="dashboard-focus-target bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6 flex flex-col">
               <h3 className="text-2xl font-bold mb-6 flex items-center gap-3">Notification Inbox</h3>
               <div className="space-y-4 flex-1 overflow-y-auto pr-3 custom-scrollbar">
-                 {incomingSwaps.length === 0 && myUpdates.length === 0 && (
+                 {incomingSwaps.length === 0 && pendingManagerRequests.length === 0 && myUpdates.length === 0 && (
                     <div className="text-slate-500 italic py-10 text-center bg-slate-900 border border-slate-800 rounded-2xl flex flex-col items-center">
                        <span className="text-3xl mb-3 opacity-50">📬</span>
                        All caught up. No messages remaining.
@@ -423,6 +465,57 @@ export default function StaffDashboard({ user }: { user: any }) {
                            </div>
                         </div>
                     );
+                 })}
+
+                 {pendingManagerRequests.map(req => {
+                   const initShift = shifts.find((s) => s.id === req.initiatorShift?.id);
+                   const targShift = shifts.find((s) => s.id === req.targetShift?.id);
+                   const isInitiator = req.initiatorUser?.id === user.id;
+                   return (
+                     <div key={`pending-manager-${req.id}`} className="bg-amber-900/20 border border-amber-500/30 p-5 rounded-[1.5rem] shadow-sm">
+                       <div className="flex justify-between items-start mb-2">
+                         <p className="text-[10px] text-amber-300 font-bold uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                           Awaiting Manager Approval
+                         </p>
+                         <span className="text-[10px] text-slate-500 font-mono">
+                           {req.type}
+                         </span>
+                       </div>
+                       <p className="text-base font-bold mb-3 text-white">
+                         {req.type === 'DROP'
+                           ? 'Coverage has been claimed and is waiting for manager approval.'
+                           : 'Both staff members agreed to the swap. A manager must approve it before anything changes.'}
+                       </p>
+                       <div className="bg-slate-950 p-4 rounded-xl text-xs font-mono text-slate-300 mb-5 border border-slate-800 flex flex-col gap-2">
+                         <div className="flex justify-between">
+                           <span className="text-slate-500">Your role:</span>
+                           <span className="text-amber-300">{isInitiator ? 'Requester' : 'Accepting staff'}</span>
+                         </div>
+                         {initShift && (
+                           <div className="flex justify-between">
+                             <span className="text-slate-500">Initiator shift:</span>
+                             <span>{getShiftTiming(initShift, viewerTimeZone).locationDate} @ {getShiftTiming(initShift, viewerTimeZone).locationTimeRange}</span>
+                           </div>
+                         )}
+                         {targShift && (
+                           <div className="flex justify-between">
+                             <span className="text-slate-500">Target shift:</span>
+                             <span>{getShiftTiming(targShift, viewerTimeZone).locationDate} @ {getShiftTiming(targShift, viewerTimeZone).locationTimeRange}</span>
+                           </div>
+                         )}
+                       </div>
+                       <p className="mb-4 text-sm text-slate-300">
+                         Original assignments stay in place until the manager approves. Either participating staff member can still cancel before that approval happens.
+                       </p>
+                       <button
+                         disabled={actingRequestId === req.id}
+                         onClick={() => handleAction(req.id, 'cancel')}
+                         className="w-full rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm font-bold text-rose-300 transition hover:border-rose-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                       >
+                         {actingRequestId === req.id ? 'Working...' : isInitiator ? 'Cancel Request' : 'Withdraw Acceptance'}
+                       </button>
+                     </div>
+                   );
                  })}
 
                  {myUpdates.map(req => {
@@ -458,7 +551,7 @@ export default function StaffDashboard({ user }: { user: any }) {
        </div>
 
        {/* Coverage Board */}
-       <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-8 relative overflow-hidden">
+       <div id="coverage-marketplace" className="dashboard-focus-target bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/5 blur-3xl rounded-full"></div>
           <h3 className="text-3xl font-bold mb-2 text-white relative z-10">Coverage Marketplace</h3>
           <p className="text-slate-400 text-base mb-8 relative z-10 max-w-2xl">Open dropped shifts available for immediate pickup. The constraint engine will statically auto-verify your compliance capabilities before establishing pickup authorization.</p>
@@ -481,7 +574,7 @@ export default function StaffDashboard({ user }: { user: any }) {
                         <p className="text-xs text-slate-500 mb-6">{timing.locationTimeZone} • Your time: {timing.viewerTimeRange}</p>
                      </div>
                      <button onClick={() => {
-                        const check = validateAssignment(user, shift, shifts, allStaff);
+                        const check = validateAssignment(currentStaff, shift, shifts, allStaff);
                         if (!check.valid) return toast.error(`System Block: ${check.reason}`);
                         handleAction(req.id, 'accept');
                      }} disabled={actingRequestId === req.id} className="w-full bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600 hover:text-white font-bold py-3.5 rounded-xl transition-all shadow-sm group-hover:shadow-[0_0_15px_rgba(37,99,235,0.2)] disabled:cursor-not-allowed disabled:opacity-50">{actingRequestId === req.id ? 'Working...' : 'Pick Up Coverage'}</button>
@@ -504,11 +597,19 @@ export default function StaffDashboard({ user }: { user: any }) {
                  <div>
                     <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Select Compatible Target Shift</label>
                     <select required value={swapTargetId} onChange={e=>setSwapTargetId(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl p-4 text-white text-sm focus:outline-none focus:border-blue-500 shadow-inner">
-                      <option value="">-- Dropdown loads future eligible shifts --</option>
+                      <option value="">-- Compatible published shifts only --</option>
                       {swapOptions.map(s => (
                         <option key={s.id} value={s.id}>{s.date} {s.startTime.slice(0,5)} ({s.assignedStaff?.name} @ {s.location?.name})</option>
                       ))}
                     </select>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Only shifts that pass both sides of the swap check are listed here.
+                    </p>
+                    {swapOptions.length === 0 && (
+                      <div className="mt-3 rounded-xl border border-dashed border-slate-700 bg-slate-950 p-3 text-xs text-slate-400">
+                        No compatible published shifts are available for a peer swap right now.
+                      </div>
+                    )}
                  </div>
                  
                  <div>

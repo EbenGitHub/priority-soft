@@ -60,7 +60,7 @@ export default function SchedulingPage() {
   const [overrideRequest, setOverrideRequest] = useState<OverrideRequest | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [cutoffOverrideRequest, setCutoffOverrideRequest] = useState<null | {
-    action: 'edit' | 'unassign';
+    action: 'edit' | 'unassign' | 'unpublish';
     shift: Shift;
     message: string;
   }>(null);
@@ -145,8 +145,8 @@ export default function SchedulingPage() {
     try {
       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
       const [locRes, usersRes] = await Promise.all([
-        fetch(`${API_URL}/locations`),
-        fetch(`${API_URL}/users`),
+        fetch(`${API_URL}/locations${actor.actorId ? `?actorId=${encodeURIComponent(actor.actorId)}` : ''}`),
+        fetch(`${API_URL}/users${actor.actorId ? `?actorId=${encodeURIComponent(actor.actorId)}` : ''}`),
       ]);
       const lData = (await locRes.json()) as Location[];
       const uData = await usersRes.json();
@@ -263,7 +263,7 @@ export default function SchedulingPage() {
     } catch(err) {
       try {
         const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-        const res = await fetch(`${API_URL}/shifts`);
+        const res = await fetch(`${API_URL}/shifts${actor.actorId ? `?actorId=${encodeURIComponent(actor.actorId)}` : ''}`);
         if (res.ok) {
           const rawShifts = (await res.json()) as Shift[];
           setShifts(
@@ -464,7 +464,7 @@ export default function SchedulingPage() {
         return;
       }
 
-      const shiftsResponse = await fetch(`${API_URL}/shifts`);
+      const shiftsResponse = await fetch(`${API_URL}/shifts${actor.actorId ? `?actorId=${encodeURIComponent(actor.actorId)}` : ''}`);
       const nextShifts = shiftsResponse.ok ? (await shiftsResponse.json()) as Shift[] : shifts;
       setShifts(nextShifts);
       await fetchFairness();
@@ -550,21 +550,37 @@ export default function SchedulingPage() {
     }
   };
 
-  const togglePublishState = async (shiftId: string) => {
+  const togglePublishState = async (shiftId: string, cutoffReason?: string) => {
      setPublishingShiftId(shiftId);
      try {
        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
        const res = await fetch(`${API_URL}/shifts/${shiftId}/publish`, {
          method: 'PUT',
          headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify(actor),
+         body: JSON.stringify({
+           ...actor,
+           cutoffOverrideReason: cutoffReason,
+         }),
        });
        if (!res.ok) {
          const err = await res.json();
+         if (isCutoffOverrideError(err)) {
+           const targetShift = shifts.find((shift) => shift.id === shiftId);
+           if (targetShift) {
+             setCutoffOverrideRequest({
+               action: 'unpublish',
+               shift: targetShift,
+               message: err?.message || 'This published shift is inside the schedule lock window and needs an override reason to unpublish.',
+             });
+           }
+           return;
+         }
          toast.error(err?.message || 'Unable to update publish state.');
          return;
        }
        await fetchShifts();
+       setCutoffOverrideRequest(null);
+       setCutoffOverrideReason('');
        toast.success('Schedule publish state updated.');
      } catch(err) {
        console.error(err);
@@ -764,19 +780,29 @@ export default function SchedulingPage() {
           subtitle={cutoffOverrideRequest.message}
           label="Override Reason"
           placeholder="Document why this locked schedule change must still happen."
-          submitLabel={cutoffOverrideRequest.action === 'edit' ? 'Override And Save' : 'Override And Unassign'}
+          submitLabel={
+            cutoffOverrideRequest.action === 'edit'
+              ? 'Override And Save'
+              : cutoffOverrideRequest.action === 'unpublish'
+                ? 'Override And Unpublish'
+                : 'Override And Unassign'
+          }
           initialValue={cutoffOverrideReason}
           required
           loading={
             cutoffOverrideRequest.action === 'edit'
               ? creatingShift
-              : assigningOperationKeys.includes(getUnassignKey(cutoffOverrideRequest.shift.id))
+              : cutoffOverrideRequest.action === 'unpublish'
+                ? publishingShiftId === cutoffOverrideRequest.shift.id
+                : assigningOperationKeys.includes(getUnassignKey(cutoffOverrideRequest.shift.id))
           }
           onClose={() => {
             if (
               cutoffOverrideRequest.action === 'edit'
                 ? creatingShift
-                : assigningOperationKeys.includes(getUnassignKey(cutoffOverrideRequest.shift.id))
+                : cutoffOverrideRequest.action === 'unpublish'
+                  ? publishingShiftId === cutoffOverrideRequest.shift.id
+                  : assigningOperationKeys.includes(getUnassignKey(cutoffOverrideRequest.shift.id))
             ) {
               return;
             }
@@ -787,6 +813,10 @@ export default function SchedulingPage() {
             setCutoffOverrideReason(value);
             if (cutoffOverrideRequest.action === 'edit') {
               await submitShiftForm(value);
+              return;
+            }
+            if (cutoffOverrideRequest.action === 'unpublish') {
+              await togglePublishState(cutoffOverrideRequest.shift.id, value);
               return;
             }
             await removeAssignment(cutoffOverrideRequest.shift, value);

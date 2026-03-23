@@ -45,6 +45,8 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [locationSelections, setLocationSelections] = useState<Record<string, string[]>>({});
+  const [staffLocationSelections, setStaffLocationSelections] = useState<Record<string, string[]>>({});
+  const [staffSkillSelections, setStaffSkillSelections] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     const rawUser = window.localStorage.getItem('shiftSync_user');
@@ -62,8 +64,8 @@ export default function UsersPage() {
       try {
         const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
         const [usersRes, locationsRes] = await Promise.all([
-          fetch(`${API_URL}/users`),
-          fetch(`${API_URL}/locations`),
+          fetch(`${API_URL}/users?actorId=${encodeURIComponent(currentUser.id)}`),
+          fetch(`${API_URL}/locations?actorId=${encodeURIComponent(currentUser.id)}`),
         ]);
 
         const usersData = (await usersRes.json()) as DashboardUser[];
@@ -76,6 +78,20 @@ export default function UsersPage() {
             usersData
               .filter((user) => user.role === 'MANAGER')
               .map((user) => [user.id, (user.locations || []).map((location) => location.id)]),
+          ),
+        );
+        setStaffLocationSelections(
+          Object.fromEntries(
+            usersData
+              .filter((user) => user.role === 'STAFF')
+              .map((user) => [user.id, (user.locations || []).map((location) => location.id)]),
+          ),
+        );
+        setStaffSkillSelections(
+          Object.fromEntries(
+            usersData
+              .filter((user) => user.role === 'STAFF')
+              .map((user) => [user.id, (user.skills || []).map((skill) => skill.id)]),
           ),
         );
 
@@ -111,7 +127,7 @@ export default function UsersPage() {
   const staffUsers = visibleUsers.filter((user) => user.role === 'STAFF');
   const managerUsers = visibleUsers.filter((user) => user.role === 'MANAGER');
 
-  async function adminUpdateUser(userId: string, payload: Partial<Pick<DashboardUser, 'desiredHours' | 'isActive'>> & { locationIds?: string[] }) {
+  async function adminUpdateUser(userId: string, payload: Partial<Pick<DashboardUser, 'desiredHours' | 'isActive'>> & { locationIds?: string[]; skillIds?: string[] }) {
     if (!sessionUser) return;
     setSavingUserId(userId);
     try {
@@ -143,6 +159,24 @@ export default function UsersPage() {
     }
     return [...counts.entries()].sort((left, right) => right[1] - left[1]);
   }, [staffUsers]);
+
+  const allSkills = useMemo(() => {
+    const skillMap = new Map<string, { id: string; name: string }>();
+    for (const appUser of users) {
+      for (const skill of appUser.skills || []) {
+        skillMap.set(skill.id, skill);
+      }
+    }
+    return [...skillMap.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [users]);
+
+  const managerScopedLocations = useMemo(() => {
+    if (sessionUser?.role === 'MANAGER') {
+      const allowed = new Set(sessionUser.locations?.map((location) => location.id) || []);
+      return locations.filter((location) => allowed.has(location.id));
+    }
+    return locations;
+  }, [locations, sessionUser]);
 
   if (sessionUser && sessionUser.role === 'STAFF') {
     return null;
@@ -280,6 +314,75 @@ export default function UsersPage() {
                     )}
                   </div>
                 </div>
+                {(sessionUser?.role === 'ADMIN' || sessionUser?.role === 'MANAGER') && (
+                  <div className="mt-5 border-t border-slate-800 pt-5 space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Edit Certified Locations</p>
+                        <div className="space-y-2">
+                          {managerScopedLocations.map((location) => {
+                            const checked = (staffLocationSelections[staffMember.id] || []).includes(location.id);
+                            return (
+                              <label key={location.id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-300">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) => {
+                                    setStaffLocationSelections((current) => {
+                                      const next = new Set(current[staffMember.id] || []);
+                                      if (event.target.checked) next.add(location.id);
+                                      else next.delete(location.id);
+                                      return { ...current, [staffMember.id]: [...next] };
+                                    });
+                                  }}
+                                />
+                                <span>{location.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Edit Skills</p>
+                        <div className="space-y-2">
+                          {allSkills.map((skill) => {
+                            const checked = (staffSkillSelections[staffMember.id] || []).includes(skill.id);
+                            return (
+                              <label key={skill.id} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-300">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) => {
+                                    setStaffSkillSelections((current) => {
+                                      const next = new Set(current[staffMember.id] || []);
+                                      if (event.target.checked) next.add(skill.id);
+                                      else next.delete(skill.id);
+                                      return { ...current, [staffMember.id]: [...next] };
+                                    });
+                                  }}
+                                />
+                                <span>{skill.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={savingUserId === staffMember.id}
+                      onClick={() =>
+                        adminUpdateUser(staffMember.id, {
+                          locationIds: staffLocationSelections[staffMember.id] || [],
+                          skillIds: staffSkillSelections[staffMember.id] || [],
+                        })
+                      }
+                      className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2.5 text-sm font-bold text-cyan-300 transition hover:border-cyan-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingUserId === staffMember.id ? 'Saving...' : 'Save Certifications And Skills'}
+                    </button>
+                  </div>
+                )}
                 {sessionUser?.role === 'ADMIN' && (
                   <div className="mt-5 border-t border-slate-800 pt-5">
                     <button
