@@ -59,4 +59,25 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     this.server.to(`user:${userId}`).emit('notification_preferences_updated', preferences);
   }
+
+  emitSessionInvalidated(preservedUserIds: string[] = []) {
+    this.server.emit('session_invalidated', { preservedUserIds });
+  }
+
+  emitUsersInvalidated(userIds: string[]) {
+    this.server.emit('session_invalidated', { invalidatedUserIds: userIds });
+  }
+
+  emitOperationProgress(
+    userId: string,
+    payload: {
+      scope: 'reset' | 'seed';
+      target: string;
+      message: string;
+      status: 'running' | 'completed' | 'failed';
+      counts?: Record<string, number>;
+    },
+  ) {
+    this.server.to(`user:${userId}`).emit('operation_progress', payload);
+  }
 }
