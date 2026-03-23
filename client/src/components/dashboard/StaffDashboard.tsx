@@ -1,48 +1,72 @@
 "use client";
 import React, { useEffect, useState } from 'react';
-import { Shift, Staff } from '../../lib/mockData';
+import DatePicker from 'react-datepicker';
+import { Availability, Shift, Staff } from '../../lib/mockData';
 import { validateAssignment } from '../../lib/schedulingRules';
 import { getShiftTiming } from '../../lib/calendarTime';
-
-interface SwapRequest {
-  id: string;
-  type: string;
-  status: string;
-  initiatorShift?: Shift | null;
-  targetShift?: Shift | null;
-  initiatorUser?: any;
-  targetUser?: any;
-}
+import { toast } from 'sonner';
+import {
+  actOnSwapRequest,
+  createAvailability,
+  createDropRequest,
+  createSwapRequest,
+  deleteAvailability,
+  fetchStaffDashboardState,
+  fetchSwapRequests,
+  StaffSwapRequest,
+  updateAvailability,
+  updateDesiredHours,
+} from '../../lib/staffDashboardApi';
+import ModalShell from '../ui/ModalShell';
+import ReasonModal from '../ui/ReasonModal';
 
 export default function StaffDashboard({ user }: { user: any }) {
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [swaps, setSwaps] = useState<SwapRequest[]>([]);
+  const [swaps, setSwaps] = useState<StaffSwapRequest[]>([]);
   const [allStaff, setAllStaff] = useState<Staff[]>([]);
+  const [profile, setProfile] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
+  const [desiredHours, setDesiredHours] = useState(String(user.desiredHours || ''));
+  const [savingDesiredHours, setSavingDesiredHours] = useState(false);
+  const [savingAvailability, setSavingAvailability] = useState(false);
+  const [availabilityType, setAvailabilityType] = useState<'RECURRING' | 'EXCEPTION'>('RECURRING');
+  const [availabilityDayOfWeek, setAvailabilityDayOfWeek] = useState('1');
+  const [availabilityDate, setAvailabilityDate] = useState('');
+  const [availabilityExceptionDate, setAvailabilityExceptionDate] = useState<Date | null>(null);
+  const [availabilityStartTime, setAvailabilityStartTime] = useState('09:00');
+  const [availabilityEndTime, setAvailabilityEndTime] = useState('17:00');
+  const [availabilityTimeZone, setAvailabilityTimeZone] = useState('UTC');
+  const [editingAvailabilityId, setEditingAvailabilityId] = useState<string | null>(null);
+  const [deletingAvailabilityId, setDeletingAvailabilityId] = useState<string | null>(null);
 
   const [showSwapModal, setShowSwapModal] = useState<Shift | null>(null);
   const [swapTargetId, setSwapTargetId] = useState('');
   const [swapReason, setSwapReason] = useState('');
+  const [dropShift, setDropShift] = useState<Shift | null>(null);
+  const [dropReason, setDropReason] = useState('');
+  const [submittingSwap, setSubmittingSwap] = useState(false);
+  const [submittingDrop, setSubmittingDrop] = useState(false);
+  const [actingRequestId, setActingRequestId] = useState<string | null>(null);
 
   const fetchLiveState = async () => {
     try {
-      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-      const [shRes, usrRes] = await Promise.all([
-        fetch(`${API_URL}/shifts`),
-        fetch(`${API_URL}/users`)
-      ]);
-      if (shRes.ok) setShifts(await shRes.json());
-      if (usrRes.ok) setAllStaff(await usrRes.json());
+      const state = await fetchStaffDashboardState(user.id);
+      setShifts(state.shifts);
+      setAllStaff(state.staff);
+      if (state.profile) {
+        const me = state.profile;
+        setProfile(me);
+        setDesiredHours(String(me.desiredHours ?? ''));
+        setAvailabilityTimeZone(me.locations?.[0]?.timezone || viewerTimeZone || 'UTC');
+      }
     } catch(err) {}
     setLoading(false);
   };
 
   const refreshSwaps = async () => {
      try {
-       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-       const res = await fetch(`${API_URL}/swaps`);
-       if (res.ok) setSwaps(await res.json());
+       setSwaps(await fetchSwapRequests());
      } catch (err) {}
   };
 
@@ -53,21 +77,118 @@ export default function StaffDashboard({ user }: { user: any }) {
   useEffect(() => {
     fetchLiveState();
     refreshSwaps();
-  }, []);
+  }, [user.id]);
 
-  const handleDrop = async (shiftId: string) => {
-    const reason = prompt('Reason for dropping shift (optional)?');
-    if (reason === null) return;
+  const saveDesiredHours = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingDesiredHours(true);
     try {
-       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-       const res = await fetch(`${API_URL}/swaps`, {
-         method: 'POST', headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ type: 'DROP', initiatorUserId: user.id, initiatorShiftId: shiftId, reason })
-       });
-       if (!res.ok) throw new Error((await res.json()).message || 'Database block executed');
-       refreshSwaps();
+      const updated = await updateDesiredHours(user.id, Math.max(0, Number(desiredHours) || 0));
+      setProfile(updated);
+      setDesiredHours(String(updated.desiredHours ?? ''));
+      localStorage.setItem('shiftSync_user', JSON.stringify(updated));
+      toast.success('Desired hours updated.');
+    } catch (error: any) {
+      toast.error(error.message || 'Unable to update desired hours.');
+    } finally {
+      setSavingDesiredHours(false);
+    }
+  };
+
+  const submitAvailability = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (availabilityStartTime >= availabilityEndTime) {
+      toast.error('Availability end must be later than the start time.');
+      return;
+    }
+
+    setSavingAvailability(true);
+    try {
+      const payload: any = {
+        type: availabilityType,
+        startTime: `${availabilityStartTime}:00`,
+        endTime: `${availabilityEndTime}:00`,
+        timezone: availabilityTimeZone || viewerTimeZone,
+      };
+      if (availabilityType === 'RECURRING') {
+        payload.dayOfWeek = Number(availabilityDayOfWeek);
+      } else {
+        payload.date = availabilityDate;
+      }
+
+      if (editingAvailabilityId) {
+        await updateAvailability(user.id, editingAvailabilityId, payload);
+      } else {
+        await createAvailability(user.id, payload);
+      }
+
+      await fetchLiveState();
+      setEditingAvailabilityId(null);
+      setAvailabilityDate('');
+      setAvailabilityExceptionDate(null);
+      toast.success(editingAvailabilityId ? 'Availability updated.' : 'Availability added.');
+    } catch (error: any) {
+      toast.error(error.message || (editingAvailabilityId ? 'Unable to update availability.' : 'Unable to add availability.'));
+    } finally {
+      setSavingAvailability(false);
+    }
+  };
+
+  const startEditingAvailability = (availability: Availability) => {
+    setEditingAvailabilityId(availability.id);
+    setAvailabilityType(availability.type);
+    setAvailabilityDayOfWeek(String(availability.dayOfWeek ?? '1'));
+    setAvailabilityStartTime(availability.startTime.slice(0, 5));
+    setAvailabilityEndTime(availability.endTime.slice(0, 5));
+    setAvailabilityTimeZone(availability.timezone || viewerTimeZone);
+    if (availability.type === 'EXCEPTION' && availability.date) {
+      setAvailabilityDate(availability.date);
+      setAvailabilityExceptionDate(new Date(`${availability.date}T12:00:00`));
+    } else {
+      setAvailabilityDate('');
+      setAvailabilityExceptionDate(null);
+    }
+  };
+
+  const resetAvailabilityForm = () => {
+    setEditingAvailabilityId(null);
+    setAvailabilityType('RECURRING');
+    setAvailabilityDayOfWeek('1');
+    setAvailabilityDate('');
+    setAvailabilityExceptionDate(null);
+    setAvailabilityStartTime('09:00');
+    setAvailabilityEndTime('17:00');
+    setAvailabilityTimeZone(profile?.locations?.[0]?.timezone || viewerTimeZone || 'UTC');
+  };
+
+  const handleDeleteAvailability = async (availabilityId: string) => {
+    setDeletingAvailabilityId(availabilityId);
+    try {
+      await deleteAvailability(user.id, availabilityId);
+      await fetchLiveState();
+      if (editingAvailabilityId === availabilityId) {
+        resetAvailabilityForm();
+      }
+      toast.success('Availability deleted.');
+    } catch (error: any) {
+      toast.error(error.message || 'Unable to delete availability.');
+    } finally {
+      setDeletingAvailabilityId(null);
+    }
+  };
+
+  const handleDrop = async (shiftId: string, reason: string) => {
+    setSubmittingDrop(true);
+    try {
+       await createDropRequest(user.id, shiftId, reason);
+       await refreshSwaps();
+       setDropShift(null);
+       setDropReason('');
+       toast.success('Drop request submitted.');
     } catch (e:any) {
-       alert(e.message);
+       toast.error(e.message || 'Unable to submit drop request.');
+    } finally {
+       setSubmittingDrop(false);
     }
   };
 
@@ -84,52 +205,214 @@ export default function StaffDashboard({ user }: { user: any }) {
      const targetCanWorkInitiator = validateAssignment(targetUser, showSwapModal, shifts, allStaff);
 
      if (!initiatorCanWorkTarget.valid) {
-        alert(`You are not cleared for their shift: ${initiatorCanWorkTarget.reason}`);
+        toast.error(`You are not cleared for their shift: ${initiatorCanWorkTarget.reason}`);
         return;
      }
      if (!targetCanWorkInitiator.valid) {
-        alert(`They are not cleared for your shift: ${targetCanWorkInitiator.reason}`);
+        toast.error(`They are not cleared for your shift: ${targetCanWorkInitiator.reason}`);
         return;
      }
 
+     setSubmittingSwap(true);
      try {
-       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-       const res = await fetch(`${API_URL}/swaps`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'SWAP', initiatorUserId: user.id, initiatorShiftId: showSwapModal.id,
-            targetShiftId: targetShift.id, targetUserId: targetUser.id, reason: swapReason
-          })
+       await createSwapRequest({
+         type: 'SWAP',
+         initiatorUserId: user.id,
+         initiatorShiftId: showSwapModal.id,
+         targetShiftId: targetShift.id,
+         targetUserId: targetUser.id,
+         reason: swapReason,
        });
-       if (!res.ok) throw new Error((await res.json()).message);
        setShowSwapModal(null);
-       refreshSwaps();
+       setSwapTargetId('');
+       setSwapReason('');
+       await refreshSwaps();
+       toast.success('Swap request sent.');
      } catch (e:any) {
-       alert(e.message);
+       toast.error(e.message || 'Unable to create swap request.');
+     } finally {
+       setSubmittingSwap(false);
      }
   };
 
   const handleAction = async (id: string, action: string) => {
+     setActingRequestId(id);
      try {
-       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-       await fetch(`${API_URL}/swaps/${id}/${action}`, {
-         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
-       });
-       refreshSwaps();
-     } catch (err) {}
+       await actOnSwapRequest(id, action, user.id);
+       await refreshSwaps();
+       toast.success(
+         action === 'accept'
+           ? 'Request accepted.'
+           : action === 'decline'
+             ? 'Request declined.'
+             : action === 'cancel'
+               ? 'Request cancelled.'
+               : 'Request updated.',
+       );
+     } catch (err: any) {
+       toast.error(err.message || 'Unable to process request.');
+     } finally {
+       setActingRequestId(null);
+     }
   };
 
   if (loading) return <div>Loading Profile Interface...</div>;
 
   const myShifts = shifts.filter(s => s.assignedStaff?.id === user.id);
-  const swapOptions = shifts.filter(s => s.assignedStaff && s.assignedStaff.id !== user.id && new Date(`${s.date}T${s.startTime}`).getTime() > Date.now());
+  const swapOptions = shifts.filter(
+    (s) => s.assignedStaff && s.assignedStaff.id !== user.id && getShiftTiming(s, viewerTimeZone).startUtc.getTime() > Date.now(),
+  );
 
   const coverageDrops = swaps.filter(s => s.type === 'DROP' && s.status === 'PENDING_PEER' && s.initiatorUser?.id !== user.id);
   const incomingSwaps = swaps.filter(s => s.type === 'SWAP' && s.status === 'PENDING_PEER' && s.targetUser?.id === user.id);
   const myUpdates = swaps.filter(s => s.initiatorUser?.id === user.id && ['APPROVED', 'REJECTED', 'CANCELLED'].includes(s.status));
+  const availabilityItems = profile?.availabilities || [];
+  const weekdayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  const setExceptionDate = (value: Date | null) => {
+    setAvailabilityExceptionDate(value);
+    if (!value) {
+      setAvailabilityDate('');
+      return;
+    }
+    const year = value.getFullYear();
+    const month = `${value.getMonth() + 1}`.padStart(2, '0');
+    const day = `${value.getDate()}`.padStart(2, '0');
+    setAvailabilityDate(`${year}-${month}-${day}`);
+  };
 
   return (
     <div className="space-y-8 animate-fade-in-up">
+       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+          <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6">
+             <h3 className="text-2xl font-bold mb-6">Work Preferences</h3>
+             <form onSubmit={saveDesiredHours} className="space-y-4">
+               <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4">
+                 <p className="text-[10px] uppercase tracking-widest font-bold text-slate-500">Desired Hours</p>
+                 <p className="mt-2 text-sm text-slate-300">Set the weekly hours you want managers to target when distributing shifts.</p>
+                 <div className="mt-4 flex items-center gap-3">
+                   <input type="number" min={0} value={desiredHours} onChange={(e) => setDesiredHours(e.target.value)} className="w-32 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none" />
+                   <button type="submit" disabled={savingDesiredHours} className="rounded-xl border border-emerald-500 bg-emerald-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50">
+                     {savingDesiredHours ? 'Saving...' : 'Save Hours'}
+                   </button>
+                 </div>
+               </div>
+             </form>
+             <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-900 p-4">
+               <p className="text-[10px] uppercase tracking-widest font-bold text-slate-500">Current Profile</p>
+               <p className="mt-2 text-sm text-white">{profile?.name || user.name}</p>
+               <p className="mt-1 text-xs text-slate-400">Skills: {profile?.skills?.map((skill) => skill.name).join(', ') || 'None assigned'}</p>
+               <p className="mt-1 text-xs text-slate-400">Certified locations: {profile?.locations?.map((location) => location.name).join(', ') || 'None assigned'}</p>
+             </div>
+          </div>
+
+          <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6">
+             <h3 className="text-2xl font-bold mb-6">Availability</h3>
+             <form onSubmit={submitAvailability} className="space-y-4">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div>
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Type</label>
+                   <select value={availabilityType} onChange={(e) => setAvailabilityType(e.target.value as 'RECURRING' | 'EXCEPTION')} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none">
+                     <option value="RECURRING">Recurring Weekly</option>
+                     <option value="EXCEPTION">One-off Exception</option>
+                   </select>
+                 </div>
+                 <div>
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Timezone</label>
+                   <input value={availabilityTimeZone} onChange={(e) => setAvailabilityTimeZone(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none" />
+                 </div>
+               </div>
+
+               {availabilityType === 'RECURRING' ? (
+                 <div>
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Day of Week</label>
+                   <select value={availabilityDayOfWeek} onChange={(e) => setAvailabilityDayOfWeek(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none">
+                     {weekdayLabels.map((label, index) => <option key={label} value={index}>{label}</option>)}
+                   </select>
+                 </div>
+               ) : (
+                 <div>
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Exception Date</label>
+                   <DatePicker
+                     selected={availabilityExceptionDate}
+                     onChange={setExceptionDate}
+                     minDate={new Date()}
+                     dateFormat="MMMM d, yyyy"
+                     placeholderText="Choose an exception date"
+                     className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none"
+                     calendarClassName="shift-datepicker-calendar"
+                     popperClassName="shift-datepicker-popper"
+                   />
+                 </div>
+               )}
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div>
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Start Time</label>
+                   <input type="time" required value={availabilityStartTime} onChange={(e) => setAvailabilityStartTime(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none" />
+                 </div>
+                 <div>
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">End Time</label>
+                   <input type="time" required value={availabilityEndTime} onChange={(e) => setAvailabilityEndTime(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none" />
+                 </div>
+               </div>
+
+               <div className="flex flex-wrap gap-3">
+                 <button type="submit" disabled={savingAvailability || (availabilityType === 'EXCEPTION' && !availabilityDate)} className="rounded-xl border border-blue-500 bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-50">
+                   {savingAvailability ? 'Saving...' : editingAvailabilityId ? 'Save Availability' : 'Add Availability'}
+                 </button>
+                 {editingAvailabilityId && (
+                   <button
+                     type="button"
+                     onClick={resetAvailabilityForm}
+                     className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-bold text-slate-300 transition hover:border-slate-600 hover:text-white"
+                   >
+                     Cancel Edit
+                   </button>
+                 )}
+               </div>
+             </form>
+
+             <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-900 p-4">
+               <p className="text-[10px] uppercase tracking-widest font-bold text-slate-500">Saved Windows</p>
+               <div className="mt-4 space-y-3 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                 {availabilityItems.length === 0 && <p className="text-sm text-slate-500 italic">No availability windows saved yet.</p>}
+                 {availabilityItems.map((availability: Availability) => (
+                   <div key={availability.id} className="rounded-xl border border-slate-700 bg-slate-950 p-3">
+                     <div className="flex items-start justify-between gap-3">
+                       <div>
+                         <p className="text-sm font-semibold text-white">
+                           {availability.type === 'RECURRING'
+                             ? `${weekdayLabels[availability.dayOfWeek || 0]}`
+                             : availability.date}
+                         </p>
+                         <p className="mt-1 text-xs text-slate-400">{availability.startTime.slice(0, 5)} - {availability.endTime.slice(0, 5)} • {availability.timezone}</p>
+                       </div>
+                       <div className="flex gap-2">
+                         <button
+                           type="button"
+                           onClick={() => startEditingAvailability(availability)}
+                           className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-blue-300 transition hover:border-blue-400 hover:text-white"
+                         >
+                           Edit
+                         </button>
+                         <button
+                           type="button"
+                           disabled={deletingAvailabilityId === availability.id}
+                           onClick={() => handleDeleteAvailability(availability.id)}
+                           className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] font-bold uppercase tracking-widest text-rose-300 transition hover:border-rose-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                         >
+                           {deletingAvailabilityId === availability.id ? 'Deleting...' : 'Delete'}
+                         </button>
+                       </div>
+                     </div>
+                   </div>
+                 ))}
+               </div>
+             </div>
+          </div>
+       </div>
+
        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
            {/* My Shifts */}
            <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6">
@@ -149,13 +432,16 @@ export default function StaffDashboard({ user }: { user: any }) {
                          </div>
                          <div>
                             {activeReq ? (
-                               <div className="bg-amber-500/10 text-amber-500 border border-amber-500/30 px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center shadow-inner">
-                                 {activeReq.type === 'DROP' ? 'Drop Request' : 'Peer Swap'}<br/><span className="text-slate-300 font-normal mt-1 block">Pending Approval</span>
+                               <div className="flex flex-col gap-2">
+                                 <div className="bg-amber-500/10 text-amber-500 border border-amber-500/30 px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center shadow-inner">
+                                   {activeReq.type === 'DROP' ? 'Drop Request' : 'Peer Swap'}<br/><span className="text-slate-300 font-normal mt-1 block">Pending Approval</span>
+                                 </div>
+                                 <button disabled={actingRequestId === activeReq.id} onClick={() => handleAction(activeReq.id, 'cancel')} className="text-[11px] block text-center uppercase tracking-widest bg-rose-500/10 text-rose-300 border border-rose-500/30 px-4 py-2.5 rounded-xl hover:bg-rose-500/20 font-bold transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50">{actingRequestId === activeReq.id ? 'Working...' : 'Cancel Request'}</button>
                                </div>
                             ) : (
                                <div className="flex flex-col gap-2">
                                   <button onClick={() => setShowSwapModal(shift)} className="text-[11px] block text-center uppercase tracking-widest bg-blue-600/20 text-blue-400 border border-blue-500/30 px-4 py-2.5 rounded-xl hover:bg-blue-600 hover:text-white font-bold transition-all shadow-sm">Request Swap</button>
-                                  <button onClick={() => handleDrop(shift.id)} className="text-[11px] block text-center uppercase tracking-widest bg-slate-800 text-slate-300 border border-slate-600 px-4 py-2.5 rounded-xl hover:border-slate-500 hover:text-white transition-all shadow-sm">Drop Shift</button>
+                                  <button onClick={() => { setDropShift(shift); setDropReason(''); }} className="text-[11px] block text-center uppercase tracking-widest bg-slate-800 text-slate-300 border border-slate-600 px-4 py-2.5 rounded-xl hover:border-slate-500 hover:text-white transition-all shadow-sm">Drop Shift</button>
                                </div>
                             )}
                          </div>
@@ -193,8 +479,8 @@ export default function StaffDashboard({ user }: { user: any }) {
                              <div className="flex justify-between"><span className="text-slate-500">Your Shift:</span> <span className="text-blue-400">{toTiming?.locationDate} @ {toTiming?.locationTimeRange}</span></div>
                            </div>
                            <div className="flex gap-3">
-                             <button onClick={() => handleAction(req.id, 'decline')} className="flex-1 bg-transparent text-slate-400 border border-slate-600 py-2.5 rounded-xl hover:text-white hover:bg-slate-700 font-bold text-sm transition-all">Decline</button>
-                             <button onClick={() => handleAction(req.id, 'accept')} className="flex-1 bg-emerald-600 text-white border border-emerald-500 py-2.5 rounded-xl hover:bg-emerald-500 font-bold text-sm shadow-lg transition-all hover:-translate-y-0.5">Accept Swap</button>
+                             <button disabled={actingRequestId === req.id} onClick={() => handleAction(req.id, 'decline')} className="flex-1 bg-transparent text-slate-400 border border-slate-600 py-2.5 rounded-xl hover:text-white hover:bg-slate-700 font-bold text-sm transition-all disabled:cursor-not-allowed disabled:opacity-50">{actingRequestId === req.id ? 'Working...' : 'Decline'}</button>
+                             <button disabled={actingRequestId === req.id} onClick={() => handleAction(req.id, 'accept')} className="flex-1 bg-emerald-600 text-white border border-emerald-500 py-2.5 rounded-xl hover:bg-emerald-500 font-bold text-sm shadow-lg transition-all hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">{actingRequestId === req.id ? 'Working...' : 'Accept Swap'}</button>
                            </div>
                         </div>
                     );
@@ -239,9 +525,9 @@ export default function StaffDashboard({ user }: { user: any }) {
                      </div>
                      <button onClick={() => {
                         const check = validateAssignment(user, shift, shifts, allStaff);
-                        if (!check.valid) return alert(`System Block: ${check.reason}`);
+                        if (!check.valid) return toast.error(`System Block: ${check.reason}`);
                         handleAction(req.id, 'accept');
-                     }} className="w-full bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600 hover:text-white font-bold py-3.5 rounded-xl transition-all shadow-sm group-hover:shadow-[0_0_15px_rgba(37,99,235,0.2)]">Pick Up Coverage</button>
+                     }} disabled={actingRequestId === req.id} className="w-full bg-blue-600/20 text-blue-400 border border-blue-500/50 hover:bg-blue-600 hover:text-white font-bold py-3.5 rounded-xl transition-all shadow-sm group-hover:shadow-[0_0_15px_rgba(37,99,235,0.2)] disabled:cursor-not-allowed disabled:opacity-50">{actingRequestId === req.id ? 'Working...' : 'Pick Up Coverage'}</button>
                   </div>
                 )
              })}
@@ -249,17 +535,13 @@ export default function StaffDashboard({ user }: { user: any }) {
        </div>
 
        {/* Peer Swap Action Modal Form */}
-       {showSwapModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50 p-4">
-           <div className="bg-slate-900 rounded-[2rem] border border-slate-700 w-full max-w-lg overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)]">
-              <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
-                 <h3 className="text-xl font-bold">Initiate Peer Swap Agreement</h3>
-                 <button onClick={() => setShowSwapModal(null)} className="h-10 w-10 bg-slate-800 flex items-center justify-center rounded-full hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors">✕</button>
-              </div>
-              <form onSubmit={submitSwap} className="p-8 space-y-6">
+      {showSwapModal && (
+        <ModalShell title="Initiate Peer Swap Agreement" onClose={() => setShowSwapModal(null)} maxWidthClass="max-w-lg">
+              <form onSubmit={submitSwap} className="space-y-6">
                  <div className="bg-slate-950 p-5 rounded-2xl border border-slate-800 shadow-inner">
                     <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mb-2">Shift being surrendered</p>
                     <p className="text-emerald-400 font-mono text-base">{showSwapModal.date} • {showSwapModal.startTime.slice(0,5)} to {showSwapModal.endTime.slice(0,5)}</p>
+                    <p className="mt-2 text-xs text-slate-400">{showSwapModal.skipManagerApproval ? 'This shift is configured to skip manager approval once the peer accepts.' : 'This shift still requires manager approval after peer acceptance.'}</p>
                  </div>
                  
                  <div>
@@ -278,11 +560,28 @@ export default function StaffDashboard({ user }: { user: any }) {
                  </div>
 
                  <div className="pt-2">
-                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 font-bold py-4 rounded-xl transition-all hover:-translate-y-0.5 shadow-lg border border-blue-500 text-sm tracking-wide">Dispatch Swap Request Envelope</button>
+                    <button type="submit" disabled={submittingSwap} className="w-full bg-blue-600 hover:bg-blue-500 font-bold py-4 rounded-xl transition-all hover:-translate-y-0.5 shadow-lg border border-blue-500 text-sm tracking-wide disabled:cursor-not-allowed disabled:opacity-50">{submittingSwap ? 'Submitting...' : 'Dispatch Swap Request Envelope'}</button>
                  </div>
               </form>
-           </div>
-        </div>
+        </ModalShell>
+      )}
+
+      {dropShift && (
+        <ReasonModal
+          title="Drop Shift"
+          subtitle="Add an optional note for the manager and pickup staff."
+          label="Reason"
+          placeholder="Explain why you need coverage for this shift."
+          submitLabel="Submit Drop Request"
+          initialValue={dropReason}
+          loading={submittingDrop}
+          onClose={() => {
+            if (submittingDrop) return;
+            setDropShift(null);
+            setDropReason('');
+          }}
+          onSubmit={(value) => handleDrop(dropShift.id, value)}
+        />
       )}
     </div>
   );

@@ -1,6 +1,10 @@
 "use client";
 import React, { useEffect, useState } from 'react';
 import { Shift } from '../../lib/mockData';
+import ScheduleCalendar from '../calendar/ScheduleCalendar';
+import { toast } from 'sonner';
+import { getShiftTiming } from '../../lib/calendarTime';
+import { groupShiftCoverage } from '../../lib/shiftCoverage';
 
 interface SwapRequest {
   id: string;
@@ -20,6 +24,13 @@ export default function ManagerDashboard({ user }: { user: any }) {
   
   const [swaps, setSwaps] = useState<SwapRequest[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
+  const [actingSwapId, setActingSwapId] = useState<string | null>(null);
+  const [fairnessScore, setFairnessScore] = useState<number | null>(null);
+
+  useEffect(() => {
+    setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  }, []);
 
   useEffect(() => {
     if (!selectedLoc) return;
@@ -51,15 +62,32 @@ export default function ManagerDashboard({ user }: { user: any }) {
     loadApprovals();
   }, []);
 
+  useEffect(() => {
+    if (!selectedLoc) return;
+    const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+    fetch(`${API_URL}/analytics/fairness?locationId=${selectedLoc}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => setFairnessScore(data?.overallScore ?? null))
+      .catch(() => setFairnessScore(null));
+  }, [selectedLoc]);
+
   const handleManagerAction = async (req: SwapRequest, approve: boolean) => {
+     setActingSwapId(req.id);
      try {
        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
        const action = approve ? 'approve' : 'reject';
-       const res = await fetch(`${API_URL}/swaps/${req.id}/${action}`, { method: 'PUT' });
+       const res = await fetch(`${API_URL}/swaps/${req.id}/${action}`, {
+         method: 'PUT',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ actorId: user.id }),
+       });
        if (!res.ok) throw new Error((await res.json()).message);
-       loadApprovals(); 
+       await loadApprovals();
+       toast.success(approve ? 'Swap approved.' : 'Swap rejected.');
      } catch (err:any) {
-       alert(`Error executing database override: ${err.message}`);
+       toast.error(err.message || 'Unable to complete manager action.');
+     } finally {
+       setActingSwapId(null);
      }
   };
 
@@ -68,9 +96,45 @@ export default function ManagerDashboard({ user }: { user: any }) {
      const shift = shifts.find(sh => sh.id === s.initiatorShift?.id);
      return shift && managerLocs.includes(shift.location?.id);
   });
+  const selectedLocation = locations.find((location: any) => location.id === selectedLoc);
+  const selectedLocationShifts = shifts.filter((shift) => shift.location?.id === selectedLoc);
+  const coverageGroups = groupShiftCoverage(selectedLocationShifts, viewerTimeZone);
+  const overtimeCost = (() => {
+    const byStaff = new Map<string, number>();
+    for (const shift of selectedLocationShifts) {
+      if (!shift.assignedStaff?.id) continue;
+      byStaff.set(shift.assignedStaff.id, (byStaff.get(shift.assignedStaff.id) || 0) + getShiftTiming(shift, viewerTimeZone).durationHours);
+    }
+    return [...byStaff.values()].reduce((total, hours) => total + Math.max(0, hours - 40) * 25.5 * 1.5, 0);
+  })();
+  const understaffedCount = coverageGroups.filter((group) => group.status === 'understaffed').length;
+  const overstaffedCount = coverageGroups.filter((group) => group.status === 'overstaffed').length;
+  const noCoverageCount = coverageGroups.filter((group) => group.status === 'no_coverage').length;
 
   return (
     <div className="space-y-8 animate-fade-in-up">
+       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+         <div className="rounded-[1.5rem] border border-slate-700 bg-slate-800 p-5 shadow-lg">
+           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Projected OT Cost</p>
+           <p className="mt-3 text-3xl font-black text-white">${overtimeCost.toFixed(2)}</p>
+         </div>
+         <div className="rounded-[1.5rem] border border-slate-700 bg-slate-800 p-5 shadow-lg">
+           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Fairness Score</p>
+           <p className="mt-3 text-3xl font-black text-white">{fairnessScore ?? '--'}{fairnessScore !== null ? '%' : ''}</p>
+         </div>
+         <div className="rounded-[1.5rem] border border-rose-500/20 bg-rose-500/5 p-5 shadow-lg">
+           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-300">Understaffed</p>
+           <p className="mt-3 text-3xl font-black text-white">{understaffedCount}</p>
+         </div>
+         <div className="rounded-[1.5rem] border border-amber-500/20 bg-amber-500/5 p-5 shadow-lg">
+           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">Overstaffed</p>
+           <p className="mt-3 text-3xl font-black text-white">{overstaffedCount}</p>
+         </div>
+         <div className="rounded-[1.5rem] border border-rose-500/20 bg-rose-500/5 p-5 shadow-lg">
+           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-300">No Coverage</p>
+           <p className="mt-3 text-3xl font-black text-white">{noCoverageCount}</p>
+         </div>
+       </div>
        
        {/* Live Approval Queue Panel */}
        {approvalQueue.length > 0 && (
@@ -104,8 +168,20 @@ export default function ManagerDashboard({ user }: { user: any }) {
                          </div>
                       </div>
                       <div className="flex gap-3">
-                        <button onClick={() => handleManagerAction(req, false)} className="px-6 py-3.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:border-red-500/50 font-bold transition-all shadow-sm">Reject Override</button>
-                        <button onClick={() => handleManagerAction(req, true)} className="px-6 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:-translate-y-0.5 border border-emerald-500">Authorize Execution</button>
+                        <button
+                          onClick={() => handleManagerAction(req, false)}
+                          disabled={actingSwapId === req.id}
+                          className="px-6 py-3.5 rounded-xl border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:border-red-500/50 font-bold transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {actingSwapId === req.id ? 'Working...' : 'Reject Override'}
+                        </button>
+                        <button
+                          onClick={() => handleManagerAction(req, true)}
+                          disabled={actingSwapId === req.id}
+                          className="px-6 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:-translate-y-0.5 border border-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {actingSwapId === req.id ? 'Working...' : 'Authorize Execution'}
+                        </button>
                       </div>
                    </div>
                  );
@@ -133,6 +209,18 @@ export default function ManagerDashboard({ user }: { user: any }) {
             ))}
           </div>
        </div>
+
+       {selectedLoc && (
+         <ScheduleCalendar
+           shifts={selectedLocationShifts}
+           viewerTimeZone={viewerTimeZone}
+           title="Location Schedule Calendar"
+           subtitle="Planner view for the territory you currently manage."
+           emptyLabel="No shifts scheduled for this location."
+           locationTimeZoneLabel={selectedLocation ? `${selectedLocation.name} • ${selectedLocation.timezone}` : undefined}
+           layout="stacked"
+         />
+       )}
 
        {selectedLoc && (
          <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-8">
