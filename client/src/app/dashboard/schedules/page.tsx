@@ -6,7 +6,7 @@ import { validateAssignment, ValidationResult } from '../../../lib/schedulingRul
 import { FairnessAnalytics } from '../../../lib/fairnessMetrics';
 import { useRealtime } from '../../../lib/useRealtime';
 import { fetchCalendarShifts, previewShiftTiming } from '../../../lib/calendarApi';
-import { buildShiftUtcRange, getShiftTiming } from '../../../lib/calendarTime';
+import { buildShiftUtcRange, getDateTimePartsInTimeZone, getShiftTiming } from '../../../lib/calendarTime';
 import { fetchShiftAuditLogs } from '../../../lib/auditApi';
 import { AuditLogRecord } from '../../../lib/auditTypes';
 import { getMockAuditLogsForShift } from '../../../lib/mockAuditLogs';
@@ -86,11 +86,7 @@ export default function SchedulingPage() {
       : locations;
   const activeLocation = availableLocations.find((location) => location.id === selectedLocation) || null;
   const activeDraftLocation = locations.find((location) => location.id === newShiftLocation) || activeLocation || null;
-  const isOvernightDraft = Boolean(
-    newShiftDate &&
-    newShiftEndDate &&
-    (newShiftEndDate !== newShiftDate || (newShiftStart && newShiftEnd && `${newShiftEnd}:00` <= `${newShiftStart}:00`)),
-  );
+  const isOvernightDraft = shiftPreview?.isOvernight || false;
   const canManageSchedules = actor.actorRole === 'MANAGER' || actor.actorRole === 'ADMIN';
   const planningMinDate = new Date();
   const shiftDateOrderInvalid = Boolean(startDateTime && endDateTime && endDateTime.getTime() <= startDateTime.getTime());
@@ -384,8 +380,8 @@ export default function SchedulingPage() {
 
   useEffect(() => {
     async function loadPreview() {
-      const location = locations.find((item) => item.id === newShiftLocation);
-      if (!location || !newShiftDate || !newShiftEndDate || !newShiftStart || !newShiftEnd) {
+      const locationTimedDraft = getLocationTimedDraft();
+      if (!locationTimedDraft) {
         setShiftPreview(null);
         return;
       }
@@ -393,28 +389,28 @@ export default function SchedulingPage() {
       try {
         const preview = await previewShiftTiming({
           locationId: newShiftLocation,
-          date: newShiftDate,
-          endDate: newShiftEndDate,
-          startTime: `${newShiftStart}:00`,
-          endTime: `${newShiftEnd}:00`,
+          date: locationTimedDraft.date,
+          endDate: locationTimedDraft.endDate,
+          startTime: locationTimedDraft.startTime,
+          endTime: locationTimedDraft.endTime,
           viewerTimeZone,
         });
         setShiftPreview(preview);
       } catch {
         const fallback = buildShiftUtcRange(
-          newShiftDate,
-          `${newShiftStart}:00`,
-          `${newShiftEnd}:00`,
-          location.timezone,
-          newShiftEndDate,
+          locationTimedDraft.date,
+          locationTimedDraft.startTime,
+          locationTimedDraft.endTime,
+          locationTimedDraft.location.timezone,
+          locationTimedDraft.endDate,
         );
         const fallbackShift = {
           id: 'preview',
-          location,
-          date: newShiftDate,
-          endDate: newShiftEndDate,
-          startTime: `${newShiftStart}:00`,
-          endTime: `${newShiftEnd}:00`,
+          location: locationTimedDraft.location,
+          date: locationTimedDraft.date,
+          endDate: locationTimedDraft.endDate,
+          startTime: locationTimedDraft.startTime,
+          endTime: locationTimedDraft.endTime,
           startUtc: fallback.startUtc.toISOString(),
           endUtc: fallback.endUtc.toISOString(),
           isOvernight: fallback.isOvernight,
@@ -440,7 +436,7 @@ export default function SchedulingPage() {
     }
 
     loadPreview();
-  }, [locations, newShiftDate, newShiftEndDate, newShiftEnd, newShiftSkill, newShiftStart, newShiftLocation, newShiftSkipManagerApproval, skills, viewerTimeZone]);
+  }, [locations, startDateTime, endDateTime, newShiftSkill, newShiftLocation, newShiftSkipManagerApproval, skills, viewerTimeZone]);
 
   const locShifts = shifts.filter(s => s.location?.id === selectedLocation);
   const coverageGroups = groupShiftCoverage(locShifts, viewerTimeZone);
@@ -481,10 +477,31 @@ export default function SchedulingPage() {
 
   const isCutoffOverrideError = (payload: any) => payload?.code === 'CUTOFF_OVERRIDE_REQUIRED';
 
+  const getLocationTimedDraft = () => {
+    const location = locations.find((item) => item.id === newShiftLocation);
+    if (!location || !startDateTime || !endDateTime) {
+      return null;
+    }
+
+    const start = getDateTimePartsInTimeZone(startDateTime, location.timezone);
+    const end = getDateTimePartsInTimeZone(endDateTime, location.timezone);
+
+    return {
+      location,
+      date: start.date,
+      endDate: end.date,
+      startTime: start.time,
+      endTime: end.time,
+    };
+  };
+
   const submitShiftForm = async (cutoffReason?: string) => {
-    if (!newShiftDate || !newShiftEndDate || !newShiftStart || !newShiftEnd || !newShiftSkill || !newShiftLocation || shiftDateOrderInvalid) {
+    const locationTimedDraft = getLocationTimedDraft();
+    if (!locationTimedDraft || !newShiftSkill || !newShiftLocation || shiftDateOrderInvalid) {
       if (shiftDateOrderInvalid) {
         toast.error('Shift end must be later than shift start.');
+      } else {
+        toast.error('Choose a location, start time, and end time.');
       }
       return false;
     }
@@ -496,10 +513,10 @@ export default function SchedulingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           locationId: newShiftLocation,
-          date: newShiftDate,
-          endDate: newShiftEndDate,
-          startTime: newShiftStart + ':00',
-          endTime: newShiftEnd + ':00',
+          date: locationTimedDraft.date,
+          endDate: locationTimedDraft.endDate,
+          startTime: locationTimedDraft.startTime,
+          endTime: locationTimedDraft.endTime,
           requiredSkillId: newShiftSkill,
           headcountNeeded: newShiftHeadcount,
           skipManagerApproval: newShiftSkipManagerApproval,
@@ -825,6 +842,7 @@ export default function SchedulingPage() {
         editingShift={editingShift}
         availableLocations={availableLocations}
         activeDraftLocation={activeDraftLocation}
+        viewerTimeZone={viewerTimeZone}
         startDateTime={startDateTime}
         endDateTime={endDateTime}
         planningMinDate={planningMinDate}

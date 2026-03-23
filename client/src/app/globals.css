@@ -159,7 +159,8 @@ textarea:disabled,
 }
 
 .shift-calendar .calendar-event-published,
-.shift-calendar .calendar-event-draft {
+.shift-calendar .calendar-event-draft,
+.shift-calendar .calendar-event-availability {
   border-radius: 0.9rem;
 }
 
@@ -171,6 +172,11 @@ textarea:disabled,
 .shift-calendar .calendar-event-draft > div {
   border-color: rgba(245, 158, 11, 0.4);
   background: rgba(69, 26, 3, 0.9);
+}
+
+.shift-calendar .calendar-event-availability > div {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(2, 44, 34, 0.9);
 }
 
 .shift-calendar .rbc-agenda-view table {
