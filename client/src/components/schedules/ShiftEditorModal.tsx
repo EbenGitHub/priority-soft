@@ -7,6 +7,7 @@ export default function ShiftEditorModal({
   editingShift,
   availableLocations,
   activeDraftLocation,
+  viewerTimeZone,
   startDateTime,
   endDateTime,
   planningMinDate,
@@ -41,8 +42,10 @@ export default function ShiftEditorModal({
         <ShiftDateTimePicker
           locationLabel={activeDraftLocation?.name || 'Select a location'}
           locationTimeZone={activeDraftLocation?.timezone || 'UTC'}
+          viewerTimeZone={viewerTimeZone}
           startDateTime={startDateTime}
           endDateTime={endDateTime}
+          shiftPreview={shiftPreview}
           minDate={planningMinDate}
           onChangeStartDateTime={onChangeStartDateTime}
           onChangeEndDateTime={onChangeEndDateTime}

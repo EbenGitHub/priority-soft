@@ -363,7 +363,18 @@ export class ShiftsService {
     return { scheduleGroupId: groupId, headcountNeeded: requestedHeadcount, primaryShiftId: updatedShifts[0]?.id || existingShift.id };
   }
 
-  async findAll() {
+  async findAll(actorId?: string) {
+    if (actorId) {
+      const actor = await this.userRepo.findOne({ where: { id: actorId } });
+      if (actor?.role === 'STAFF') {
+        return this.shiftRepo.find({
+          where: { published: true },
+          relations: ['requiredSkill', 'assignedStaff', 'location'],
+          order: { date: 'ASC', startTime: 'ASC' },
+        });
+      }
+    }
+
     return this.shiftRepo.find({
       relations: ['requiredSkill', 'assignedStaff', 'location'],
       order: { date: 'ASC', startTime: 'ASC' }

@@ -113,6 +113,7 @@ export type ShiftEditorModalProps = {
   editingShift: Shift | null;
   availableLocations: Location[];
   activeDraftLocation: Location | null;
+  viewerTimeZone: string;
   startDateTime: Date | null;
   endDateTime: Date | null;
   planningMinDate: Date;

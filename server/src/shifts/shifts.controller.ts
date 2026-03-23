@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, Put } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Put, Query } from '@nestjs/common';
 import { ShiftsService } from './shifts.service';
 
 @Controller('shifts')
@@ -16,8 +16,8 @@ export class ShiftsController {
   }
 
   @Get()
-  findAll() {
-    return this.shiftsService.findAll();
+  findAll(@Query('actorId') actorId?: string) {
+    return this.shiftsService.findAll(actorId);
   }
 
   @Get('location/:id')
