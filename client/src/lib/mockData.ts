@@ -16,6 +16,8 @@ export interface Availability {
   type: 'RECURRING' | 'EXCEPTION';
   dayOfWeek?: number; // 0-6
   date?: string; // YYYY-MM-DD
+  location?: Location | null;
+  locationId?: string;
   timezone?: string;
   startTime: string; // HH:mm:ss
   endTime: string; // HH:mm:ss

@@ -5,6 +5,7 @@ import ScheduleCalendar from '../calendar/ScheduleCalendar';
 import { toast } from 'sonner';
 import { getShiftTiming } from '../../lib/calendarTime';
 import { groupShiftCoverage } from '../../lib/shiftCoverage';
+import { forecastAssignmentImpact } from '../../lib/overtimeForecast';
 
 interface SwapRequest {
   id: string;
@@ -110,6 +111,29 @@ export default function ManagerDashboard({ user }: { user: any }) {
   const understaffedCount = coverageGroups.filter((group) => group.status === 'understaffed').length;
   const overstaffedCount = coverageGroups.filter((group) => group.status === 'overstaffed').length;
   const noCoverageCount = coverageGroups.filter((group) => group.status === 'no_coverage').length;
+  const overtimeWatchlist = staff
+    .filter((member) => member.role === 'STAFF')
+    .map((member) => {
+      const memberShifts = selectedLocationShifts.filter((shift) => shift.assignedStaff?.id === member.id);
+      const totalHours = memberShifts.reduce(
+        (total, shift) => total + getShiftTiming(shift, viewerTimeZone).durationHours,
+        0,
+      );
+      const latestShift = [...memberShifts].sort(
+        (left, right) =>
+          getShiftTiming(right, viewerTimeZone).startUtc.getTime() -
+          getShiftTiming(left, viewerTimeZone).startUtc.getTime(),
+      )[0];
+      const forecast = latestShift ? forecastAssignmentImpact(member, latestShift, selectedLocationShifts) : null;
+      return {
+        member,
+        totalHours,
+        forecast,
+      };
+    })
+    .filter((item) => item.totalHours > 0)
+    .sort((left, right) => right.totalHours - left.totalHours)
+    .slice(0, 5);
 
   return (
     <div className="space-y-8 animate-fade-in-up">
@@ -135,6 +159,60 @@ export default function ManagerDashboard({ user }: { user: any }) {
            <p className="mt-3 text-3xl font-black text-white">{noCoverageCount}</p>
          </div>
        </div>
+
+       {selectedLoc && overtimeWatchlist.length > 0 && (
+         <div className="rounded-[2rem] border border-amber-500/20 bg-amber-500/5 p-8 shadow-2xl">
+           <div className="mb-6 flex items-center justify-between gap-4">
+             <div>
+               <h3 className="text-2xl font-bold text-white">Overtime Watchlist</h3>
+               <p className="mt-2 text-sm text-slate-300">
+                 Managers can see who is closest to overtime and which assignments are driving it.
+               </p>
+             </div>
+             <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-amber-300">
+               What-if aware
+             </span>
+           </div>
+           <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+             {overtimeWatchlist.map(({ member, totalHours, forecast }) => (
+               <div key={member.id} className="rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5 shadow-lg">
+                 <div className="flex items-start justify-between gap-3">
+                   <div>
+                     <p className="text-lg font-bold text-white">{member.name}</p>
+                     <p className="mt-1 text-xs text-slate-400">{member.email}</p>
+                   </div>
+                   <span
+                     className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] ${
+                       totalHours >= 40
+                         ? 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                         : totalHours >= 35
+                           ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                           : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                     }`}
+                   >
+                     {totalHours >= 40 ? 'Overtime' : totalHours >= 35 ? 'At Risk' : 'Stable'}
+                   </span>
+                 </div>
+                 <p className="mt-4 text-3xl font-black text-white">{totalHours.toFixed(1)}h</p>
+                 <p className="mt-1 text-xs text-slate-500">Assigned in the selected location view</p>
+                 {forecast && (
+                   <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
+                     <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                       Last Assignment Impact
+                     </p>
+                     <p className="mt-2 text-sm text-white">
+                       Weekly: {forecast.currentWeeklyHours.toFixed(1)}h {'->'} {forecast.projectedWeeklyHours.toFixed(1)}h
+                     </p>
+                     <p className="mt-1 text-[11px] text-slate-400">
+                       OT cost projection: ${forecast.projectedOvertimeCost.toFixed(2)}
+                     </p>
+                   </div>
+                 )}
+               </div>
+             ))}
+           </div>
+         </div>
+       )}
        
        {/* Live Approval Queue Panel */}
        {approvalQueue.length > 0 && (

@@ -79,6 +79,9 @@ function getWeekdayInTimeZone(dateKey: string, timeZone: string) {
 }
 
 function getLocationLabel(availability: Availability, locations: Location[]) {
+  if (availability.location?.name) {
+    return availability.location.name;
+  }
   const matchingLocations = locations.filter((location) => location.timezone === availability.timezone);
 
   if (matchingLocations.length === 0) {

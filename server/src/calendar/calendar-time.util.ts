@@ -217,7 +217,8 @@ export function formatPreview(shiftLike: {
 
 export function availabilityContainsShift(availability: Availability, shift: Shift) {
   const shiftTiming = getShiftUtcRange(shift);
-  const timeZone = availability.timezone || shift.location?.timezone || 'UTC';
+  const timeZone =
+    availability.location?.timezone || availability.timezone || shift.location?.timezone || 'UTC';
   const candidateDates =
     availability.type === 'EXCEPTION' && availability.date
       ? [availability.date]

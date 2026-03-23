@@ -1,6 +1,7 @@
 import { Skill } from '../../lib/mockData';
 import { validateAssignment } from '../../lib/schedulingRules';
 import { getShiftTiming } from '../../lib/calendarTime';
+import { forecastAssignmentImpact } from '../../lib/overtimeForecast';
 import ModalShell from '../ui/ModalShell';
 import { ShiftAssignmentModalProps } from './types';
 
@@ -183,6 +184,7 @@ export default function ShiftAssignmentModal({
             {rankedCandidates.map(({ staff, preflight }) => {
               const isBlocked = !preflight.valid && !isWarnOnlyConflict(preflight);
               const classification = !preflight.valid ? classifyAssignmentConflict(preflight) : null;
+              const impact = forecastAssignmentImpact(staff, shift, shifts);
               const recommendationLabel = preflight.valid
                 ? preflight.requiresOverride
                   ? 'Override Needed'
@@ -238,6 +240,54 @@ export default function ShiftAssignmentModal({
                         ))}
                       </div>
                     )}
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      <div className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                          Weekly Impact
+                        </p>
+                        <p className="mt-2 text-sm text-white">
+                          {impact.currentWeeklyHours.toFixed(1)}h {'->'} {impact.projectedWeeklyHours.toFixed(1)}h
+                        </p>
+                        <p
+                          className={`mt-1 text-[11px] ${
+                            impact.weeklyOvertime
+                              ? 'text-rose-300'
+                              : impact.weeklyWarning
+                                ? 'text-amber-300'
+                                : 'text-slate-400'
+                          }`}
+                        >
+                          {impact.weeklyOvertime
+                            ? `Overtime triggered. +${impact.overtimeHoursAdded.toFixed(1)}h OT, projected OT cost $${impact.projectedOvertimeCost.toFixed(2)}`
+                            : impact.weeklyWarning
+                              ? 'Approaching overtime threshold'
+                              : 'Within regular weekly range'}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                          Daily Impact
+                        </p>
+                        <p className="mt-2 text-sm text-white">
+                          {impact.currentDailyHours.toFixed(1)}h {'->'} {impact.projectedDailyHours.toFixed(1)}h
+                        </p>
+                        <p
+                          className={`mt-1 text-[11px] ${
+                            impact.dailyHardBlock
+                              ? 'text-rose-300'
+                              : impact.dailyWarning
+                                ? 'text-amber-300'
+                                : 'text-slate-400'
+                          }`}
+                        >
+                          {impact.dailyHardBlock
+                            ? 'Would exceed the 12-hour hard limit'
+                            : impact.dailyWarning
+                              ? 'Would enter daily overtime'
+                              : 'No daily overtime issue'}
+                        </p>
+                      </div>
+                    </div>
                     {!preflight.valid && (
                       <p
                         className={`ml-1 mt-2 font-mono text-xs ${

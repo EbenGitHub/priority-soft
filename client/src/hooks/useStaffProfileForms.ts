@@ -110,6 +110,7 @@ export function useStaffProfileForms({
         type: availabilityType,
         startTime: `${availabilityStartTime}:00`,
         endTime: `${availabilityEndTime}:00`,
+        locationId: selectedAvailabilityLocation.id,
         timezone: selectedAvailabilityLocation.timezone || viewerTimeZone,
       };
       if (availabilityType === 'RECURRING') {

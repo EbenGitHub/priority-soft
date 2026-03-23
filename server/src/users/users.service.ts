@@ -40,7 +40,7 @@ export class UsersService {
   }
 
   findAll() {
-    return this.userRepository.find({ relations: ['locations', 'skills', 'availabilities'] }).then((users) =>
+    return this.userRepository.find({ relations: ['locations', 'skills', 'availabilities', 'availabilities.location'] }).then((users) =>
       users.map((user) => {
         const { password, ...result } = user;
         return result;
@@ -51,7 +51,7 @@ export class UsersService {
   async findOne(id: string) {
     const user = await this.userRepository.findOne({ 
       where: { id }, 
-      relations: ['locations', 'skills', 'availabilities'] 
+      relations: ['locations', 'skills', 'availabilities', 'availabilities.location'] 
     });
     if (!user) throw new NotFoundException('User not found');
     
@@ -62,7 +62,7 @@ export class UsersService {
   findByLocation(locationId: string) {
     return this.userRepository.find({
       where: { locations: { id: locationId } },
-      relations: ['locations', 'skills', 'availabilities']
+      relations: ['locations', 'skills', 'availabilities', 'availabilities.location']
     });
   }
 
@@ -85,6 +85,7 @@ export class UsersService {
     startTime: string;
     endTime: string;
     timezone: string;
+    locationId?: string | null;
     excludeAvailabilityId?: string;
   }) {
     const existing = await this.availabilityRepository.find({
@@ -95,7 +96,7 @@ export class UsersService {
         endTime: params.endTime,
         timezone: params.timezone,
       },
-      relations: ['user'],
+      relations: ['user', 'location'],
     });
 
     const duplicate = existing.find((item) => {
@@ -104,10 +105,13 @@ export class UsersService {
       }
 
       if (params.type === AvailabilityType.RECURRING) {
-        return item.dayOfWeek === (params.dayOfWeek ?? null);
+        return (
+          item.dayOfWeek === (params.dayOfWeek ?? null) &&
+          (item.location?.id || null) === (params.locationId ?? null)
+        );
       }
 
-      return item.date === (params.date ?? null);
+      return item.date === (params.date ?? null) && (item.location?.id || null) === (params.locationId ?? null);
     });
 
     if (duplicate) {
@@ -122,7 +126,12 @@ export class UsersService {
       relations: ['locations'],
     });
     if (!user) throw new NotFoundException('User not found');
-    const timezone = data.timezone || user.locations[0]?.timezone || 'UTC';
+    const selectedLocation =
+      user.locations.find((location) => location.id === (data as any).locationId) || null;
+    if (!selectedLocation) {
+      throw new BadRequestException('Availability must be attached to one of the user locations.');
+    }
+    const timezone = data.timezone || selectedLocation.timezone || user.locations[0]?.timezone || 'UTC';
 
     await this.assertAvailabilityNotDuplicated({
       userId,
@@ -132,10 +141,12 @@ export class UsersService {
       startTime: data.startTime as string,
       endTime: data.endTime as string,
       timezone,
+      locationId: selectedLocation.id,
     });
 
     const newAvail = this.availabilityRepository.create({
       ...data,
+      location: selectedLocation,
       timezone,
       user,
     });
@@ -172,9 +183,16 @@ export class UsersService {
     );
     const availability = await this.availabilityRepository.findOne({
       where: { id: availabilityId, user: { id: userId } },
-      relations: ['user', 'user.locations'],
+      relations: ['user', 'user.locations', 'location'],
     });
     if (!availability) throw new NotFoundException('Availability not found');
+    const nextLocation =
+      availability.user.locations.find((location) => location.id === (data as any).locationId) ||
+      availability.location ||
+      null;
+    if (!nextLocation) {
+      throw new BadRequestException('Availability must be attached to one of the user locations.');
+    }
 
     availability.type = (data.type as any) || availability.type;
     if (availability.type === 'RECURRING') {
@@ -186,8 +204,9 @@ export class UsersService {
     }
     availability.startTime = data.startTime || availability.startTime;
     availability.endTime = data.endTime || availability.endTime;
+    availability.location = nextLocation;
     availability.timezone =
-      data.timezone || availability.timezone || availability.user.locations[0]?.timezone || 'UTC';
+      data.timezone || nextLocation.timezone || availability.timezone || availability.user.locations[0]?.timezone || 'UTC';
 
     await this.assertAvailabilityNotDuplicated({
       userId,
@@ -197,6 +216,7 @@ export class UsersService {
       startTime: availability.startTime,
       endTime: availability.endTime,
       timezone: availability.timezone,
+      locationId: availability.location?.id || null,
       excludeAvailabilityId: availability.id,
     });
 
@@ -268,7 +288,7 @@ export class UsersService {
     await this.authzService.assertPermission(data.actorId, Permission.USERS_MANAGE);
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      relations: ['locations', 'skills', 'availabilities'],
+      relations: ['locations', 'skills', 'availabilities', 'availabilities.location'],
     });
     if (!user) throw new NotFoundException('User not found');
     if (user.role === 'ADMIN' && data.isActive === false) {

@@ -82,6 +82,7 @@ export class SeedService implements OnApplicationBootstrap {
 
   private async ensureRecurringAvailability(
     user: User,
+    location: Location,
     dayOfWeek: number,
     startTime: string,
     endTime: string,
@@ -94,12 +95,15 @@ export class SeedService implements OnApplicationBootstrap {
         dayOfWeek,
         startTime,
         endTime,
+        location: { id: location.id },
       },
+      relations: ['location'],
     });
     if (existing) return existing;
 
     return this.availabilityRepository.save({
       user,
+      location,
       type: AvailabilityType.RECURRING,
       dayOfWeek,
       startTime,
@@ -110,6 +114,7 @@ export class SeedService implements OnApplicationBootstrap {
 
   private async ensureExceptionAvailability(
     user: User,
+    location: Location,
     date: string,
     startTime: string,
     endTime: string,
@@ -122,12 +127,15 @@ export class SeedService implements OnApplicationBootstrap {
         date,
         startTime,
         endTime,
+        location: { id: location.id },
       },
+      relations: ['location'],
     });
     if (existing) return existing;
 
     return this.availabilityRepository.save({
       user,
+      location,
       type: AvailabilityType.EXCEPTION,
       date,
       startTime,
@@ -454,6 +462,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (let day = 1; day <= 5; day++) {
       await this.ensureRecurringAvailability(
         staff1,
+        loc1,
         day,
         '09:00:00',
         '17:00:00',
@@ -465,6 +474,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (const day of [5, 6, 0]) {
       await this.ensureRecurringAvailability(
         staff2,
+        loc3,
         day,
         '16:00:00',
         '23:59:59',
@@ -475,6 +485,7 @@ export class SeedService implements OnApplicationBootstrap {
     // Maria is an exception test: available Dec 31st for a massive shift
     await this.ensureExceptionAvailability(
       staff3,
+      loc1,
       '2026-12-31',
       '10:00:00',
       '22:00:00',
@@ -484,6 +495,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (let day = 1; day <= 5; day++) {
       await this.ensureRecurringAvailability(
         staff4,
+        loc1,
         day,
         '12:00:00',
         '22:00:00',
@@ -494,6 +506,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (let day = 1; day <= 5; day++) {
       await this.ensureRecurringAvailability(
         staff5,
+        loc1,
         day,
         '09:00:00',
         '17:00:00',
@@ -504,6 +517,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (const day of [4, 5, 6, 0]) {
       await this.ensureRecurringAvailability(
         staff6,
+        loc2,
         day,
         '16:00:00',
         '23:59:59',
@@ -514,6 +528,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (const day of [1, 2, 3, 4, 5, 6]) {
       await this.ensureRecurringAvailability(
         staff7,
+        loc3,
         day,
         '14:00:00',
         '23:00:00',
@@ -524,6 +539,7 @@ export class SeedService implements OnApplicationBootstrap {
     for (const day of [4, 5, 6]) {
       await this.ensureRecurringAvailability(
         staff8,
+        loc2,
         day,
         '10:00:00',
         '18:00:00',

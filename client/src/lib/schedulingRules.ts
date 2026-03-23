@@ -69,7 +69,11 @@ export function validateAssignment(
 
   for (const avail of staff.availabilities || []) {
     const availabilityTimeZone =
-      avail.timezone || targetShift.location?.timezone || staff.locations?.[0]?.timezone || 'UTC';
+      avail.location?.timezone ||
+      avail.timezone ||
+      targetShift.location?.timezone ||
+      staff.locations?.[0]?.timezone ||
+      'UTC';
 
     const candidateDates =
       avail.type === 'EXCEPTION' && avail.date

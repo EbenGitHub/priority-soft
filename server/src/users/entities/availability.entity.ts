@@ -1,6 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
 import { User } from './user.entity';
 import { AvailabilityType } from '../enums/availability-type.enum';
+import { Location } from '../../locations/entities/location.entity';
 
 @Entity('availabilities')
 export class Availability {
@@ -9,6 +10,10 @@ export class Availability {
 
   @ManyToOne(() => User, user => user.availabilities, { onDelete: 'CASCADE' })
   user: User;
+
+  @ManyToOne(() => Location, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'locationId' })
+  location?: Location | null;
 
   @Column({
     type: 'enum',

@@ -315,7 +315,7 @@ export default function StaffDashboard({ user }: { user: any }) {
                              ? `${weekdayLabels[availability.dayOfWeek || 0]}`
                              : availability.date}
                          </p>
-                         <p className="mt-1 text-xs text-slate-400">{availability.startTime.slice(0, 5)} - {availability.endTime.slice(0, 5)} • {getAvailabilityLocationLabel(availability)}</p>
+                         <p className="mt-1 text-xs text-slate-400">{availability.startTime.slice(0, 5)} - {availability.endTime.slice(0, 5)} • {availability.location?.name || getAvailabilityLocationLabel(availability)}</p>
                        </div>
                        <div className="flex gap-2">
                          <button
