@@ -118,9 +118,10 @@ export function buildShiftUtcRange(
   startTime: string,
   endTime: string,
   timeZone: string,
+  explicitEndDate?: string | null,
 ) {
-  const overnight = normalizeTime(endTime) <= normalizeTime(startTime);
-  const endDate = overnight ? addDays(date, 1) : date;
+  const endDate = explicitEndDate || (normalizeTime(endTime) <= normalizeTime(startTime) ? addDays(date, 1) : date);
+  const overnight = endDate !== date || normalizeTime(endTime) <= normalizeTime(startTime);
   const startUtc = zonedLocalToUtc(date, startTime, timeZone);
   const endUtc = zonedLocalToUtc(endDate, endTime, timeZone);
 
@@ -137,11 +138,11 @@ export function getShiftTiming(shift: Shift, viewerTimeZone: string) {
   const startUtc =
     shift.startUtc ? new Date(shift.startUtc) : buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, locationTimeZone).startUtc;
   const endUtc =
-    shift.endUtc ? new Date(shift.endUtc) : buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, locationTimeZone).endUtc;
+    shift.endUtc ? new Date(shift.endUtc) : buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, locationTimeZone, shift.endDate).endUtc;
   const isOvernight =
     typeof shift.isOvernight === 'boolean'
       ? shift.isOvernight
-      : normalizeTime(shift.endTime) <= normalizeTime(shift.startTime);
+      : (shift.endDate || shift.date) !== shift.date || normalizeTime(shift.endTime) <= normalizeTime(shift.startTime);
 
   const durationHours = (endUtc.getTime() - startUtc.getTime()) / (1000 * 60 * 60);
 

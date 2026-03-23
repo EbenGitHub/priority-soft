@@ -119,16 +119,18 @@ export function buildShiftUtcRange(
   startTime: string,
   endTime: string,
   timeZone: string,
+  explicitEndDate?: string | null,
 ) {
-  const isOvernight = normalizeTime(endTime) <= normalizeTime(startTime);
-  const endDate = isOvernight ? addDays(date, 1) : date;
+  const derivedEndDate = explicitEndDate || (normalizeTime(endTime) <= normalizeTime(startTime) ? addDays(date, 1) : date);
+  const isOvernight = derivedEndDate !== date || normalizeTime(endTime) <= normalizeTime(startTime);
   const startUtc = zonedLocalToUtc(date, startTime, timeZone);
-  const endUtc = zonedLocalToUtc(endDate, endTime, timeZone);
+  const endUtc = zonedLocalToUtc(derivedEndDate, endTime, timeZone);
 
   return {
     startUtc,
     endUtc,
     isOvernight,
+    endDate: derivedEndDate,
     durationHours: (endUtc.getTime() - startUtc.getTime()) / (1000 * 60 * 60),
   };
 }
@@ -148,7 +150,7 @@ export function getShiftUtcRange(shift: Shift) {
     };
   }
 
-  return buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, timeZone);
+  return buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, timeZone, shift.endDate);
 }
 
 export function getLocalDateKey(date: Date, timeZone: string) {
@@ -157,6 +159,7 @@ export function getLocalDateKey(date: Date, timeZone: string) {
 
 export function formatPreview(shiftLike: {
   date: string;
+  endDate?: string | null;
   startTime: string;
   endTime: string;
   location: { timezone: string };
@@ -166,6 +169,7 @@ export function formatPreview(shiftLike: {
     shiftLike.startTime,
     shiftLike.endTime,
     shiftLike.location.timezone,
+    shiftLike.endDate || null,
   );
 
   const locationDate = new Intl.DateTimeFormat('en-US', {

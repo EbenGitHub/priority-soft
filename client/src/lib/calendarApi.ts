@@ -23,6 +23,7 @@ export async function fetchCalendarShifts(params: {
 export async function previewShiftTiming(payload: {
   locationId: string;
   date: string;
+  endDate?: string;
   startTime: string;
   endTime: string;
   viewerTimeZone?: string;

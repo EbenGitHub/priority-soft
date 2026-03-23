@@ -24,13 +24,14 @@ export class CalendarService {
 
     return shifts.map((shift) => {
       const timeZone = shift.location?.timezone || 'UTC';
-      const derived = buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, timeZone);
+      const derived = buildShiftUtcRange(shift.date, shift.startTime, shift.endTime, timeZone, shift.endDate);
 
       return {
         ...shift,
         startUtc: shift.startUtc?.toISOString() || derived.startUtc.toISOString(),
         endUtc: shift.endUtc?.toISOString() || derived.endUtc.toISOString(),
         isOvernight: typeof shift.isOvernight === 'boolean' ? shift.isOvernight : derived.isOvernight,
+        endDate: shift.endDate || derived.endDate,
       };
     });
   }
@@ -38,6 +39,7 @@ export class CalendarService {
   async previewShift(payload: {
     locationId: string;
     date: string;
+    endDate?: string;
     startTime: string;
     endTime: string;
     viewerTimeZone?: string;
@@ -48,6 +50,7 @@ export class CalendarService {
     return formatPreview(
       {
         date: payload.date,
+        endDate: payload.endDate,
         startTime: payload.startTime,
         endTime: payload.endTime,
         location,
