@@ -218,7 +218,7 @@ export default function NotificationCenter({
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-14 w-[28rem] overflow-hidden rounded-[1.75rem] border border-slate-800 bg-slate-950 shadow-2xl">
+        <div className="absolute right-0 top-14 flex max-h-[min(40rem,calc(100vh-6rem))] w-[28rem] flex-col overflow-hidden rounded-[1.75rem] border border-slate-800 bg-slate-950 shadow-2xl">
           <div className="border-b border-slate-800 bg-slate-900/80 p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -308,7 +308,7 @@ export default function NotificationCenter({
             </div>
           </div>
 
-          <div className="max-h-[32rem] overflow-y-auto p-3">
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 custom-scrollbar">
             {loading && (
               <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-10 text-center text-sm text-slate-500">
                 Loading notifications...
