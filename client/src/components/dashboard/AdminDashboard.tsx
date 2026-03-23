@@ -4,6 +4,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { exportAuditLogsCsv, fetchAuditLogs } from '../../lib/auditApi';
 import { AuditLogRecord } from '../../lib/auditTypes';
 import { exportMockAuditLogsCsv, getMockAuditLogs } from '../../lib/mockAuditLogs';
+import { Shift } from '../../lib/mockData';
+import ScheduleCalendar from '../calendar/ScheduleCalendar';
+import { getShiftTiming } from '../../lib/calendarTime';
+import { groupShiftCoverage } from '../../lib/shiftCoverage';
 
 type UserSummary = {
   id: string;
@@ -23,20 +27,26 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogRecord[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loadingAudit, setLoadingAudit] = useState(true);
   const [usingMockAudit, setUsingMockAudit] = useState(false);
+  const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
+  const [fairnessScore, setFairnessScore] = useState<number | null>(null);
 
   useEffect(() => {
+    setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
     Promise.all([
       fetch(`${API_URL}/users`).then((response) => response.json()),
       fetch(`${API_URL}/locations`).then((response) => response.json()),
-    ]).then(([usersData, locationsData]) => {
+      fetch(`${API_URL}/shifts`).then((response) => response.json()),
+    ]).then(([usersData, locationsData, shiftsData]) => {
       setUsers(usersData);
       setLocations(locationsData);
+      setShifts(shiftsData);
       if (locationsData.length > 0) setSelectedLocationId(locationsData[0].id);
     });
   }, []);
@@ -78,10 +88,36 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
     };
   }, [selectedLocationId, startDate, endDate]);
 
+  useEffect(() => {
+    const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+    const query = selectedLocationId ? `?locationId=${selectedLocationId}` : '';
+    fetch(`${API_URL}/analytics/fairness${query}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => setFairnessScore(data?.overallScore ?? null))
+      .catch(() => setFairnessScore(null));
+  }, [selectedLocationId]);
+
   const displayedLocationName = useMemo(
     () => locations.find((location) => location.id === selectedLocationId)?.name || 'All locations',
     [locations, selectedLocationId],
   );
+  const calendarShifts = useMemo(
+    () => (selectedLocationId ? shifts.filter((shift) => shift.location?.id === selectedLocationId) : shifts),
+    [selectedLocationId, shifts],
+  );
+  const displayedLocationTimeZone = useMemo(
+    () => locations.find((location) => location.id === selectedLocationId)?.timezone,
+    [locations, selectedLocationId],
+  );
+  const coverageGroups = useMemo(() => groupShiftCoverage(calendarShifts, viewerTimeZone), [calendarShifts, viewerTimeZone]);
+  const projectedOvertimeCost = useMemo(() => {
+    const byStaff = new Map<string, number>();
+    for (const shift of calendarShifts) {
+      if (!shift.assignedStaff?.id) continue;
+      byStaff.set(shift.assignedStaff.id, (byStaff.get(shift.assignedStaff.id) || 0) + getShiftTiming(shift, viewerTimeZone).durationHours);
+    }
+    return [...byStaff.values()].reduce((total, hours) => total + Math.max(0, hours - 40) * 25.5 * 1.5, 0);
+  }, [calendarShifts, viewerTimeZone]);
 
   async function handleExport() {
     const filters = {
@@ -111,6 +147,29 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
       <div className="xl:col-span-2 space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Projected OT Cost</p>
+            <p className="mt-3 text-3xl font-black text-white">${projectedOvertimeCost.toFixed(2)}</p>
+          </div>
+          <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Fairness Score</p>
+            <p className="mt-3 text-3xl font-black text-white">{fairnessScore ?? '--'}{fairnessScore !== null ? '%' : ''}</p>
+          </div>
+          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 shadow-lg">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-300">Understaffed</p>
+            <p className="mt-3 text-3xl font-black text-white">{coverageGroups.filter((group) => group.status === 'understaffed').length}</p>
+          </div>
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-6 shadow-lg">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">Overstaffed</p>
+            <p className="mt-3 text-3xl font-black text-white">{coverageGroups.filter((group) => group.status === 'overstaffed').length}</p>
+          </div>
+          <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-6 shadow-lg">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-rose-300">No Coverage</p>
+            <p className="mt-3 text-3xl font-black text-white">{coverageGroups.filter((group) => group.status === 'no_coverage').length}</p>
+          </div>
+        </div>
+
         <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
@@ -162,6 +221,18 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
               />
             </div>
           </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
+          <ScheduleCalendar
+            shifts={calendarShifts}
+            viewerTimeZone={viewerTimeZone}
+            title="Operations Calendar"
+            subtitle="Google Calendar-style overview of upcoming scheduled work across the selected scope."
+            emptyLabel="No scheduled shifts exist for the current filter."
+            locationTimeZoneLabel={displayedLocationTimeZone ? `${displayedLocationName} • ${displayedLocationTimeZone}` : undefined}
+            layout="stacked"
+          />
         </div>
 
         <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
@@ -251,6 +322,52 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
 
       <div className="rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg">
         <h3 className="mb-4 text-xl font-bold text-white">Active Properties</h3>
+        <div className="mb-6 rounded-2xl border border-slate-700 bg-slate-900 p-5">
+          <h4 className="text-sm font-bold uppercase tracking-[0.2em] text-slate-400">Org Structure</h4>
+          <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <div className="flex justify-center">
+              <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-center">
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Restaurant Group</p>
+                <p className="mt-1 font-bold text-white">Coastal Eats</p>
+              </div>
+            </div>
+            <div className="mt-6 space-y-4">
+              {locations.map((location) => {
+                const managersForLocation = users.filter((entry) => entry.role === 'MANAGER' && entry.locations?.some((managedLocation) => managedLocation.id === location.id));
+                const staffForLocation = users.filter((entry) => entry.role === 'STAFF' && entry.locations?.some((staffLocation) => staffLocation.id === location.id));
+
+                return (
+                  <div key={`org-${location.id}`} className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+                    <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-300">Location</p>
+                      <p className="mt-1 font-semibold text-white">{location.name}</p>
+                    </div>
+                    <div className="mt-4 grid gap-4">
+                      <div>
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-amber-300">Managers</p>
+                        <div className="flex flex-wrap gap-2">
+                          {managersForLocation.map((manager) => (
+                            <span key={manager.id} className="rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1 text-xs text-amber-200">{manager.name}</span>
+                          ))}
+                          {managersForLocation.length === 0 && <span className="text-xs text-slate-500">No manager assigned</span>}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">Staff</p>
+                        <div className="flex flex-wrap gap-2">
+                          {staffForLocation.map((staffMember) => (
+                            <span key={staffMember.id} className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-200">{staffMember.name}</span>
+                          ))}
+                          {staffForLocation.length === 0 && <span className="text-xs text-slate-500">No staff assigned</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
         <ul className="space-y-4">
           {locations.map((location) => (
             <li key={location.id} className="group flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 transition-colors hover:border-slate-500">
