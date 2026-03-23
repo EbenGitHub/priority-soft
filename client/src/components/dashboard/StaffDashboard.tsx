@@ -215,7 +215,19 @@ export default function StaffDashboard({ user }: { user: any }) {
       });
   }, [activeSwapShiftIds, allStaff, currentStaff, shifts, showSwapModal, user.id, viewerTimeZone]);
 
-  const coverageDrops = swaps.filter(s => s.type === 'DROP' && s.status === 'PENDING_PEER' && s.initiatorUser?.id !== user.id);
+  const coverageDrops = useMemo(() => {
+    return swaps.filter((request) => {
+      if (request.type !== 'DROP' || request.status !== 'PENDING_PEER') return false;
+      if (request.initiatorUser?.id === user.id) return false;
+
+      const shift = shifts.find((candidateShift) => candidateShift.id === request.initiatorShift?.id);
+      if (!shift || !shift.published) return false;
+      if (getShiftTiming(shift, viewerTimeZone).startUtc.getTime() <= Date.now()) return false;
+
+      const validation = validateAssignment(currentStaff, shift, shifts, allStaff);
+      return validation.valid;
+    });
+  }, [allStaff, currentStaff, shifts, swaps, user.id, viewerTimeZone]);
   const incomingSwaps = swaps.filter(s => s.type === 'SWAP' && s.status === 'PENDING_PEER' && s.targetUser?.id === user.id);
   const pendingManagerRequests = swaps.filter(
     (request) =>
