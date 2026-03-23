@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import { useRouter } from 'next/navigation';
 import {
   fetchNotificationPreferences,
   fetchNotifications,
@@ -15,6 +16,7 @@ import {
   persistMockPreferences,
 } from '../../lib/mockNotifications';
 import { NotificationPreference, NotificationRecord } from '../../lib/notificationTypes';
+import { getNotificationTarget } from '../../lib/notificationNavigation';
 
 const typeStyles: Record<string, string> = {
   SHIFT_ASSIGNED: 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10',
@@ -53,6 +55,7 @@ export default function NotificationCenter({
 }: {
   user: { id: string; role: 'ADMIN' | 'MANAGER' | 'STAFF' };
 }) {
+  const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [preferences, setPreferences] = useState<NotificationPreference>({
@@ -202,6 +205,14 @@ export default function NotificationCenter({
     }
   }
 
+  async function handleNotificationClick(notification: NotificationRecord) {
+    if (!notification.readAt) {
+      await handleMarkRead(notification.id);
+    }
+    setIsOpen(false);
+    router.push(getNotificationTarget(notification, user.role));
+  }
+
   return (
     <div className="relative z-50">
       <button
@@ -327,7 +338,7 @@ export default function NotificationCenter({
                   <button
                     key={notification.id}
                     type="button"
-                    onClick={() => handleMarkRead(notification.id)}
+                    onClick={() => handleNotificationClick(notification)}
                     className={`w-full rounded-2xl border p-4 text-left transition ${
                       notification.readAt
                         ? 'border-slate-800 bg-slate-900/50'

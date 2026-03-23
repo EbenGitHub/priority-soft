@@ -34,6 +34,7 @@ export class NotificationsService {
       createdAt: notification.createdAt,
       readAt: notification.readAt,
       channels: notification.metadata?.emailEnabled ? ['IN_APP', 'EMAIL'] : ['IN_APP'],
+      metadata: notification.metadata || null,
     };
   }
 

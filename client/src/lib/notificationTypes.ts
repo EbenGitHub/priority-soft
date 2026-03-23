@@ -27,4 +27,5 @@ export interface NotificationRecord {
   createdAt: string;
   readAt: string | null;
   channels: NotificationChannel[];
+  metadata?: Record<string, unknown> | null;
 }
