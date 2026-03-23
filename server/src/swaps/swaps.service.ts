@@ -217,7 +217,8 @@ export class SwapsService {
       {
         type: 'SWAP_REQUEST_CANCELLED',
         title: 'Swap request cancelled',
-        message: 'The original requester cancelled the swap or drop workflow before approval.',
+        message:
+          'The original requester cancelled the swap or drop workflow before approval. Original shift assignments remain unchanged.',
         metadata: { swapId: saved.id },
       },
     );

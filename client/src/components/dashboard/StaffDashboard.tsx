@@ -372,6 +372,9 @@ export default function StaffDashboard({ user }: { user: any }) {
                                  <div className="bg-amber-500/10 text-amber-500 border border-amber-500/30 px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center shadow-inner">
                                    {activeReq.type === 'DROP' ? 'Drop Request' : 'Peer Swap'}<br/><span className="text-slate-300 font-normal mt-1 block">Pending Approval</span>
                                  </div>
+                                 <p className="max-w-[220px] text-center text-[11px] text-slate-400">
+                                   Original assignments stay in place until a manager approves the change.
+                                 </p>
                                  <button disabled={actingRequestId === activeReq.id} onClick={() => handleAction(activeReq.id, 'cancel')} className="text-[11px] block text-center uppercase tracking-widest bg-rose-500/10 text-rose-300 border border-rose-500/30 px-4 py-2.5 rounded-xl hover:bg-rose-500/20 font-bold transition-all shadow-sm disabled:cursor-not-allowed disabled:opacity-50">{actingRequestId === activeReq.id ? 'Working...' : 'Cancel Request'}</button>
                                </div>
                             ) : (
@@ -422,16 +425,34 @@ export default function StaffDashboard({ user }: { user: any }) {
                     );
                  })}
 
-                 {myUpdates.map(req => (
-                     <div key={req.id} className="bg-slate-900 border border-slate-700 p-5 rounded-2xl flex justify-between items-center group relative shadow-md">
-                        <div>
-                          <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest mb-1">{req.type} Complete Workflow Event</p>
-                          <p className={`text-sm font-bold bg-slate-800 px-3 py-1 rounded-lg border ${req.status === 'APPROVED' ? 'text-emerald-400 border-emerald-500/30' : req.status === 'REJECTED' ? 'text-red-400 border-red-500/30' : 'text-amber-500 border-amber-500/30'}`}>
-                            Status: {req.status}
-                          </p>
+                 {myUpdates.map(req => {
+                   const updateTone =
+                     req.status === 'APPROVED'
+                       ? 'text-emerald-400 border-emerald-500/30'
+                       : req.status === 'REJECTED'
+                         ? 'text-red-400 border-red-500/30'
+                         : 'text-amber-500 border-amber-500/30';
+                   const updateMessage =
+                     req.status === 'CANCELLED'
+                       ? 'Cancelled before manager approval. Original shift assignments remain unchanged.'
+                       : req.status === 'REJECTED'
+                         ? 'Rejected during workflow review. Original shift assignments remain unchanged.'
+                         : 'Approved and applied. Your schedule has been updated.';
+
+                   return (
+                     <div key={req.id} className="bg-slate-900 border border-slate-700 p-5 rounded-2xl group relative shadow-md">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest mb-1">{req.type} Complete Workflow Event</p>
+                            <p className={`inline-flex text-sm font-bold bg-slate-800 px-3 py-1 rounded-lg border ${updateTone}`}>
+                              Status: {req.status}
+                            </p>
+                            <p className="mt-3 max-w-xl text-sm text-slate-300">{updateMessage}</p>
+                          </div>
                         </div>
                      </div>
-                 ))}
+                   );
+                 })}
               </div>
            </div>
        </div>
