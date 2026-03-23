@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, Put, Delete } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Put, Delete, Query } from '@nestjs/common';
 import { UsersService } from './users.service';
 
 @Controller('users')
@@ -11,13 +11,13 @@ export class UsersController {
   }
 
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@Query('actorId') actorId?: string) {
+    return this.usersService.findAll(actorId);
   }
 
   @Get('location/:locationId')
-  findByLocation(@Param('locationId') locationId: string) {
-    return this.usersService.findByLocation(locationId);
+  findByLocation(@Param('locationId') locationId: string, @Query('actorId') actorId?: string) {
+    return this.usersService.findByLocation(locationId, actorId);
   }
 
   @Get(':id')

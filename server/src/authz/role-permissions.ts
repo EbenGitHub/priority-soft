@@ -5,6 +5,7 @@ export const ROLE_PERMISSIONS: Record<Role, Set<Permission>> = {
   [Role.ADMIN]: new Set(Object.values(Permission)),
   [Role.MANAGER]: new Set([
     Permission.USERS_VIEW,
+    Permission.USERS_MANAGE,
     Permission.SHIFT_CREATE,
     Permission.SHIFT_ASSIGN,
     Permission.SHIFT_PUBLISH,
