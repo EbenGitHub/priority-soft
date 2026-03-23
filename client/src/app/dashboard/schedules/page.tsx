@@ -144,12 +144,14 @@ export default function SchedulingPage() {
   const fetchReferenceData = async () => {
     try {
       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-      const [locRes, usersRes] = await Promise.all([
+      const [locRes, usersRes, skillsRes] = await Promise.all([
         fetch(`${API_URL}/locations${actor.actorId ? `?actorId=${encodeURIComponent(actor.actorId)}` : ''}`),
         fetch(`${API_URL}/users${actor.actorId ? `?actorId=${encodeURIComponent(actor.actorId)}` : ''}`),
+        fetch(`${API_URL}/users/skills`),
       ]);
       const lData = (await locRes.json()) as Location[];
       const uData = await usersRes.json();
+      const skillsData = skillsRes.ok ? ((await skillsRes.json()) as Skill[]) : [];
 
       const allowedLocationIds =
         actor.actorRole === 'MANAGER' && actor.locationIds && actor.locationIds.length > 0
@@ -170,13 +172,7 @@ export default function SchedulingPage() {
 
       const allStaff = uData.filter((u: any) => u.role === 'STAFF');
       setStaffList(allStaff);
-
-      const uniqueSkills = new Map();
-      allStaff.forEach((staff: any) => {
-        staff.skills?.forEach((skill: any) => uniqueSkills.set(skill.id, skill));
-      });
-      const skillsArr = Array.from(uniqueSkills.values()) as Skill[];
-      setSkills(skillsArr);
+      setSkills(skillsData);
     } catch (err) {
       console.error(err);
     }

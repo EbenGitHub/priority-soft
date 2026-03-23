@@ -1,5 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import DatePicker from 'react-datepicker';
 import { Availability, Shift, Staff } from '../../lib/mockData';
 import { validateAssignment } from '../../lib/schedulingRules';
@@ -21,11 +22,7 @@ import StaffAvailabilityCalendar from '../calendar/StaffAvailabilityCalendar';
 import { toast } from 'sonner';
 
 export default function StaffDashboard({ user }: { user: any }) {
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [swaps, setSwaps] = useState<StaffSwapRequest[]>([]);
-  const [allStaff, setAllStaff] = useState<Staff[]>([]);
-  const [profile, setProfile] = useState<Staff | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const viewerTimeZone = useViewerTimeZone();
 
   const [showSwapModal, setShowSwapModal] = useState<Shift | null>(null);
@@ -36,6 +33,30 @@ export default function StaffDashboard({ user }: { user: any }) {
   const [submittingSwap, setSubmittingSwap] = useState(false);
   const [submittingDrop, setSubmittingDrop] = useState(false);
   const [actingRequestId, setActingRequestId] = useState<string | null>(null);
+
+  const {
+    data: dashboardState,
+    isLoading: loading,
+    isFetching: backgroundRefreshing,
+  } = useQuery({
+    queryKey: ['staff-dashboard', user.id],
+    queryFn: () => fetchStaffDashboardState(user.id),
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: swaps = [] } = useQuery({
+    queryKey: ['staff-swaps'],
+    queryFn: fetchSwapRequests,
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const shifts = dashboardState?.shifts || [];
+  const allStaff = dashboardState?.staff || [];
+  const profile = dashboardState?.profile || null;
 
   const {
     desiredHours,
@@ -72,52 +93,26 @@ export default function StaffDashboard({ user }: { user: any }) {
     profile,
     viewerTimeZone,
     refreshProfile: async () => {
-      await fetchLiveState();
+      await queryClient.invalidateQueries({ queryKey: ['staff-dashboard', user.id] });
     },
   });
 
-  useRealtime(() => {
-    fetchLiveState();
-    refreshSwaps();
-  });
-
-  const fetchLiveState = async () => {
-    setLoading(true);
-    try {
-      const state = await fetchStaffDashboardState(user.id);
-      setShifts(state.shifts);
-      setAllStaff(state.staff);
-      if (state.profile) {
-        setProfile(state.profile);
-        syncFormFromProfile(state.profile);
-      } else {
-        setProfile(null);
-      }
-    } catch(err) {
-      setShifts([]);
-      setAllStaff([]);
-      setProfile(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const refreshSwaps = async () => {
-     try {
-       setSwaps(await fetchSwapRequests());
-     } catch (err) {}
-  };
-
   useEffect(() => {
-    fetchLiveState();
-    refreshSwaps();
-  }, [user.id]);
+    if (profile) {
+      syncFormFromProfile(profile);
+    }
+  }, [profile, syncFormFromProfile]);
+
+  useRealtime(() => {
+    queryClient.invalidateQueries({ queryKey: ['staff-dashboard', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['staff-swaps'] });
+  });
 
   const handleDrop = async (shiftId: string, reason: string) => {
     setSubmittingDrop(true);
     try {
        await createDropRequest(user.id, shiftId, reason);
-       await refreshSwaps();
+       await queryClient.invalidateQueries({ queryKey: ['staff-swaps'] });
        setDropShift(null);
        setDropReason('');
        toast.success('Drop request submitted.');
@@ -162,7 +157,7 @@ export default function StaffDashboard({ user }: { user: any }) {
        setShowSwapModal(null);
        setSwapTargetId('');
        setSwapReason('');
-       await refreshSwaps();
+       await queryClient.invalidateQueries({ queryKey: ['staff-swaps'] });
        toast.success('Swap request sent.');
      } catch (e:any) {
        toast.error(e.message || 'Unable to create swap request.');
@@ -175,7 +170,8 @@ export default function StaffDashboard({ user }: { user: any }) {
      setActingRequestId(id);
      try {
        await actOnSwapRequest(id, action, user.id);
-       await refreshSwaps();
+       await queryClient.invalidateQueries({ queryKey: ['staff-swaps'] });
+       await queryClient.invalidateQueries({ queryKey: ['staff-dashboard', user.id] });
        toast.success(
          action === 'accept'
            ? 'Request accepted.'
@@ -229,10 +225,17 @@ export default function StaffDashboard({ user }: { user: any }) {
   const myUpdates = swaps.filter(s => s.initiatorUser?.id === user.id && ['APPROVED', 'REJECTED', 'CANCELLED'].includes(s.status));
   const weekdayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  if (loading) return <div>Loading Profile Interface...</div>;
+  const initialLoading = loading && !dashboardState;
+
+  if (initialLoading) return <div>Loading Profile Interface...</div>;
 
   return (
     <div className="space-y-8 animate-fade-in-up">
+       {backgroundRefreshing && (
+         <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-xs font-semibold text-cyan-200">
+           Syncing live changes...
+         </div>
+       )}
        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           <div className="bg-slate-800 rounded-3xl border border-slate-700 shadow-2xl p-6">
              <h3 className="text-2xl font-bold mb-6">Work Preferences</h3>

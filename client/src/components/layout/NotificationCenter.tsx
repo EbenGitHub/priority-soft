@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useRouter } from 'next/navigation';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchNotificationPreferences,
   fetchNotifications,
@@ -56,49 +57,46 @@ export default function NotificationCenter({
   user: { id: string; role: 'ADMIN' | 'MANAGER' | 'STAFF' };
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
-  const [preferences, setPreferences] = useState<NotificationPreference>({
-    inAppEnabled: true,
-    emailEnabled: false,
-  });
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [usingMockData, setUsingMockData] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadState() {
+  const { data: notifications = [], isLoading: loading, isFetching: notificationsRefreshing } = useQuery({
+    queryKey: ['notifications', user.id],
+    queryFn: async () => {
       try {
-        const [apiNotifications, apiPreferences] = await Promise.all([
-          fetchNotifications(user.id),
-          fetchNotificationPreferences(user.id),
-        ]);
-
-        if (cancelled) return;
-
-        setNotifications(apiNotifications);
-        setPreferences(apiPreferences);
+        const data = await fetchNotifications(user.id);
         setUsingMockData(false);
+        return data;
       } catch {
-        if (cancelled) return;
-
         const mockState = loadMockNotifications(user);
-        setNotifications(mockState.notifications);
-        setPreferences(mockState.preferences);
         setUsingMockData(true);
-      } finally {
-        if (!cancelled) setLoading(false);
+        return mockState.notifications;
       }
-    }
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 
-    loadState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+  const { data: preferences = { inAppEnabled: true, emailEnabled: false }, isFetching: preferencesRefreshing } = useQuery({
+    queryKey: ['notification-preferences', user.id],
+    queryFn: async () => {
+      try {
+        const data = await fetchNotificationPreferences(user.id);
+        setUsingMockData(false);
+        return data;
+      } catch {
+        const mockState = loadMockNotifications(user);
+        setUsingMockData(true);
+        return mockState.preferences;
+      }
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 
   useEffect(() => {
     if (usingMockData) {
@@ -121,7 +119,7 @@ export default function NotificationCenter({
     });
 
     socket.on('notification_created', (incoming: NotificationRecord) => {
-      setNotifications((current) => {
+      queryClient.setQueryData<NotificationRecord[]>(['notifications', user.id], (current = []) => {
         if (current.some((item) => item.id === incoming.id)) return current;
         return [incoming, ...current];
       });
@@ -129,11 +127,13 @@ export default function NotificationCenter({
 
     socket.on('notifications_all_read', (payload: { userId: string }) => {
       if (payload.userId !== user.id) return;
-      setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })));
+      queryClient.setQueryData<NotificationRecord[]>(['notifications', user.id], (current = []) =>
+        current.map((item) => ({ ...item, readAt: item.readAt || new Date().toISOString() })),
+      );
     });
 
     socket.on('notification_read', (payload: { notificationId: string; readAt: string }) => {
-      setNotifications((current) =>
+      queryClient.setQueryData<NotificationRecord[]>(['notifications', user.id], (current = []) =>
         current.map((item) =>
           item.id === payload.notificationId ? { ...item, readAt: payload.readAt } : item,
         ),
@@ -141,13 +141,13 @@ export default function NotificationCenter({
     });
 
     socket.on('notification_preferences_updated', (payload: NotificationPreference) => {
-      setPreferences(payload);
+      queryClient.setQueryData(['notification-preferences', user.id], payload);
     });
 
     return () => {
       socket.disconnect();
     };
-  }, [user.id]);
+  }, [queryClient, user.id]);
 
   const unreadCount = useMemo(
     () => notifications.filter((item) => item.readAt === null).length,
@@ -164,45 +164,65 @@ export default function NotificationCenter({
     [notifications, preferences.inAppEnabled, showUnreadOnly],
   );
 
-  async function syncPreferences(next: NotificationPreference) {
-    setPreferences(next);
-
-    if (usingMockData) return;
-
-    try {
-      await updateNotificationPreferences(user.id, next);
-    } catch {
+  const preferencesMutation = useMutation({
+    mutationFn: async (next: NotificationPreference) => {
+      if (usingMockData) {
+        persistMockPreferences(user.id, next);
+        return next;
+      }
+      return updateNotificationPreferences(user.id, next);
+    },
+    onMutate: async (next) => {
+      queryClient.setQueryData(['notification-preferences', user.id], next);
+    },
+    onError: (_error, next) => {
       setUsingMockData(true);
       persistMockPreferences(user.id, next);
-    }
+    },
+  });
+
+  const markReadMutation = useMutation({
+    mutationFn: async ({ notificationId, readAt }: { notificationId: string; readAt: string }) => {
+      if (usingMockData) return null;
+      return markNotificationRead(user.id, notificationId);
+    },
+    onMutate: async ({ notificationId, readAt }) => {
+      queryClient.setQueryData<NotificationRecord[]>(['notifications', user.id], (current = []) =>
+        current.map((item) => (item.id === notificationId ? { ...item, readAt } : item)),
+      );
+    },
+    onError: () => {
+      setUsingMockData(true);
+    },
+  });
+
+  const markAllReadMutation = useMutation({
+    mutationFn: async () => {
+      if (usingMockData) return null;
+      return markAllNotificationsRead(user.id);
+    },
+    onMutate: async () => {
+      const readAt = new Date().toISOString();
+      queryClient.setQueryData<NotificationRecord[]>(['notifications', user.id], (current = []) =>
+        current.map((item) => ({ ...item, readAt: item.readAt || readAt })),
+      );
+    },
+    onError: () => {
+      setUsingMockData(true);
+    },
+  });
+
+  async function syncPreferences(next: NotificationPreference) {
+    await preferencesMutation.mutateAsync(next);
   }
 
   async function handleMarkRead(notificationId: string) {
     const readAt = new Date().toISOString();
-    setNotifications((current) =>
-      current.map((item) => (item.id === notificationId ? { ...item, readAt } : item)),
-    );
-
-    if (usingMockData) return;
-
-    try {
-      await markNotificationRead(user.id, notificationId);
-    } catch {
-      setUsingMockData(true);
-    }
+    await markReadMutation.mutateAsync({ notificationId, readAt });
   }
 
   async function handleMarkAllRead() {
-    const readAt = new Date().toISOString();
-    setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt || readAt })));
-
-    if (usingMockData) return;
-
-    try {
-      await markAllNotificationsRead(user.id);
-    } catch {
-      setUsingMockData(true);
-    }
+    await markAllReadMutation.mutateAsync();
   }
 
   async function handleNotificationClick(notification: NotificationRecord) {
@@ -235,7 +255,7 @@ export default function NotificationCenter({
               <div>
                 <h3 className="text-lg font-bold text-white">Notification Center</h3>
                 <p className="mt-1 text-sm text-slate-400">
-                  {usingMockData ? 'Mock feed active' : 'Live feed active'}
+                  {usingMockData ? 'Mock feed active' : notificationsRefreshing || preferencesRefreshing ? 'Syncing live feed...' : 'Live feed active'}
                 </p>
               </div>
               <button

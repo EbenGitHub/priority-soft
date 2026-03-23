@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import AppToaster from "../components/ui/AppToaster";
+import ReactQueryProvider from "../components/providers/ReactQueryProvider";
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -18,8 +19,10 @@ export default function RootLayout({
       className="h-full antialiased"
     >
       <body className="min-h-full flex flex-col">
-        {children}
-        <AppToaster />
+        <ReactQueryProvider>
+          {children}
+          <AppToaster />
+        </ReactQueryProvider>
       </body>
     </html>
   );

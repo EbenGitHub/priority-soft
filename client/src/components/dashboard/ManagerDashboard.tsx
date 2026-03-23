@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from 'react';
-import { Shift } from '../../lib/mockData';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Shift, Staff } from '../../lib/mockData';
 import ScheduleCalendar from '../calendar/ScheduleCalendar';
 import { toast } from 'sonner';
 import { getShiftTiming } from '../../lib/calendarTime';
@@ -19,71 +20,71 @@ interface SwapRequest {
 }
 
 export default function ManagerDashboard({ user }: { user: any }) {
+  const queryClient = useQueryClient();
   const [locations, setLocations] = useState(user.locations || []);
   const [selectedLoc, setSelectedLoc] = useState<string | null>(locations.length ? locations[0].id : null);
-  const [staff, setStaff] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  
-  const [swaps, setSwaps] = useState<SwapRequest[]>([]);
-  const [shifts, setShifts] = useState<Shift[]>([]);
   const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
   const [actingSwapId, setActingSwapId] = useState<string | null>(null);
-  const [fairnessScore, setFairnessScore] = useState<number | null>(null);
   const [selectedFairnessStaffId, setSelectedFairnessStaffId] = useState<string>('');
 
   useEffect(() => {
     setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   }, []);
 
-  useEffect(() => {
-    if (!selectedLoc) return;
-    const fetchStaff = async () => {
-      setLoading(true);
-      try {
-        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-        const res = await fetch(`${API_URL}/users/location/${selectedLoc}?actorId=${encodeURIComponent(user.id)}`);
-        if (res.ok) {
-          setStaff(await res.json());
-        } else {
-          setStaff([]);
-        }
-      } catch (err) {
-        setStaff([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStaff();
-  }, [selectedLoc]);
-
-  const loadApprovals = async () => {
-     try {
-       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-       const [shRes, swRes] = await Promise.all([
-          fetch(`${API_URL}/shifts?actorId=${encodeURIComponent(user.id)}`),
-          fetch(`${API_URL}/swaps`)
-       ]);
-       if (shRes.ok) setShifts(await shRes.json());
-       if (swRes.ok) setSwaps(await swRes.json());
-     } catch(err) {}
-  };
-
-  useEffect(() => {
-    loadApprovals();
-  }, []);
-
-  useRealtime(() => {
-    loadApprovals();
+  const { data: staff = [], isLoading: loading, isFetching: staffRefreshing } = useQuery<Staff[]>({
+    queryKey: ['manager-staff', user.id, selectedLoc],
+    enabled: Boolean(selectedLoc),
+    queryFn: async () => {
+      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+      const res = await fetch(`${API_URL}/users/location/${selectedLoc}?actorId=${encodeURIComponent(user.id)}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
-  useEffect(() => {
-    if (!selectedLoc) return;
-    const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-    fetch(`${API_URL}/analytics/fairness?locationId=${selectedLoc}`)
-      .then((response) => response.ok ? response.json() : null)
-      .then((data) => setFairnessScore(data?.overallScore ?? null))
-      .catch(() => setFairnessScore(null));
-  }, [selectedLoc]);
+  const { data: approvalData, isFetching: approvalsRefreshing } = useQuery({
+    queryKey: ['manager-approvals', user.id],
+    queryFn: async () => {
+      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+      const [shRes, swRes] = await Promise.all([
+        fetch(`${API_URL}/shifts?actorId=${encodeURIComponent(user.id)}`),
+        fetch(`${API_URL}/swaps`),
+      ]);
+      return {
+        shifts: shRes.ok ? ((await shRes.json()) as Shift[]) : [],
+        swaps: swRes.ok ? ((await swRes.json()) as SwapRequest[]) : [],
+      };
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const shifts = approvalData?.shifts || [];
+  const swaps = approvalData?.swaps || [];
+
+  useRealtime(() => {
+    queryClient.invalidateQueries({ queryKey: ['manager-approvals', user.id] });
+    queryClient.invalidateQueries({ queryKey: ['manager-staff', user.id, selectedLoc] });
+  });
+
+  const { data: fairnessScore = null, isFetching: fairnessRefreshing } = useQuery({
+    queryKey: ['manager-fairness', selectedLoc],
+    enabled: Boolean(selectedLoc),
+    queryFn: async () => {
+      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+      const response = await fetch(`${API_URL}/analytics/fairness?locationId=${selectedLoc}`);
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data?.overallScore ?? null;
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 
   const handleManagerAction = async (req: SwapRequest, approve: boolean) => {
      setActingSwapId(req.id);
@@ -96,7 +97,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
          body: JSON.stringify({ actorId: user.id }),
        });
        if (!res.ok) throw new Error((await res.json()).message);
-       await loadApprovals();
+       await queryClient.invalidateQueries({ queryKey: ['manager-approvals', user.id] });
        toast.success(approve ? 'Swap approved.' : 'Swap rejected.');
      } catch (err:any) {
        toast.error(err.message || 'Unable to complete manager action.');
@@ -200,8 +201,15 @@ export default function ManagerDashboard({ user }: { user: any }) {
     }
   }, [locationStaff, selectedFairnessStaffId]);
 
+  const backgroundRefreshing = staffRefreshing || approvalsRefreshing || fairnessRefreshing;
+
   return (
     <div className="space-y-8 animate-fade-in-up">
+       {backgroundRefreshing && !loading && (
+         <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-xs font-semibold text-cyan-200">
+           Syncing live changes...
+         </div>
+       )}
        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
          <div className="rounded-[1.5rem] border border-slate-700 bg-slate-800 p-5 shadow-lg">
            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Projected OT Cost</p>

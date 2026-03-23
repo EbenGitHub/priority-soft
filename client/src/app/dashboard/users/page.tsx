@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 
 type DashboardUser = {
   id: string;
@@ -35,14 +37,17 @@ type LocationSummary = {
   timezone: string;
 };
 
+type SkillSummary = {
+  id: string;
+  name: string;
+};
+
 const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function UsersPage() {
+  const queryClient = useQueryClient();
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
-  const [users, setUsers] = useState<DashboardUser[]>([]);
-  const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState('');
-  const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [locationSelections, setLocationSelections] = useState<Record<string, string[]>>({});
   const [staffLocationSelections, setStaffLocationSelections] = useState<Record<string, string[]>>({});
@@ -55,58 +60,62 @@ export default function UsersPage() {
     }
   }, []);
 
+  const { data, isLoading: loading, isFetching: backgroundRefreshing } = useQuery({
+    queryKey: ['users-directory', sessionUser?.id],
+    enabled: Boolean(sessionUser),
+    queryFn: async () => {
+      const currentUser = sessionUser as SessionUser;
+      const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+      const [usersRes, locationsRes, skillsRes] = await Promise.all([
+        fetch(`${API_URL}/users?actorId=${encodeURIComponent(currentUser.id)}`),
+        fetch(`${API_URL}/locations?actorId=${encodeURIComponent(currentUser.id)}`),
+        fetch(`${API_URL}/users/skills`),
+      ]);
+
+      return {
+        users: usersRes.ok ? ((await usersRes.json()) as DashboardUser[]) : [],
+        locations: locationsRes.ok ? ((await locationsRes.json()) as LocationSummary[]) : [],
+        skills: skillsRes.ok ? ((await skillsRes.json()) as SkillSummary[]) : [],
+      };
+    },
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const users = data?.users || [];
+  const locations = data?.locations || [];
+  const allSkills = data?.skills || [];
+
   useEffect(() => {
     if (!sessionUser) return;
-    const currentUser = sessionUser;
-
-    async function loadData() {
-      setLoading(true);
-      try {
-        const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
-        const [usersRes, locationsRes] = await Promise.all([
-          fetch(`${API_URL}/users?actorId=${encodeURIComponent(currentUser.id)}`),
-          fetch(`${API_URL}/locations?actorId=${encodeURIComponent(currentUser.id)}`),
-        ]);
-
-        const usersData = (await usersRes.json()) as DashboardUser[];
-        const locationsData = (await locationsRes.json()) as LocationSummary[];
-
-        setUsers(usersData);
-        setLocations(locationsData);
-        setLocationSelections(
-          Object.fromEntries(
-            usersData
-              .filter((user) => user.role === 'MANAGER')
-              .map((user) => [user.id, (user.locations || []).map((location) => location.id)]),
-          ),
-        );
-        setStaffLocationSelections(
-          Object.fromEntries(
-            usersData
-              .filter((user) => user.role === 'STAFF')
-              .map((user) => [user.id, (user.locations || []).map((location) => location.id)]),
-          ),
-        );
-        setStaffSkillSelections(
-          Object.fromEntries(
-            usersData
-              .filter((user) => user.role === 'STAFF')
-              .map((user) => [user.id, (user.skills || []).map((skill) => skill.id)]),
-          ),
-        );
-
-        const defaultLocation =
-          currentUser.role === 'MANAGER'
-            ? currentUser.locations?.[0]?.id || ''
-            : locationsData[0]?.id || '';
-        setSelectedLocationId((current) => current || defaultLocation);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadData();
-  }, [sessionUser]);
+    setLocationSelections(
+      Object.fromEntries(
+        users
+          .filter((user) => user.role === 'MANAGER')
+          .map((user) => [user.id, (user.locations || []).map((location) => location.id)]),
+      ),
+    );
+    setStaffLocationSelections(
+      Object.fromEntries(
+        users
+          .filter((user) => user.role === 'STAFF')
+          .map((user) => [user.id, (user.locations || []).map((location) => location.id)]),
+      ),
+    );
+    setStaffSkillSelections(
+      Object.fromEntries(
+        users
+          .filter((user) => user.role === 'STAFF')
+          .map((user) => [user.id, (user.skills || []).map((skill) => skill.id)]),
+      ),
+    );
+    const defaultLocation =
+      sessionUser.role === 'MANAGER'
+        ? sessionUser.locations?.[0]?.id || ''
+        : locations[0]?.id || '';
+    setSelectedLocationId((current) => current || defaultLocation);
+  }, [locations, sessionUser, users]);
 
   const allowedLocationIds = useMemo(
     () => new Set(sessionUser?.role === 'MANAGER' ? sessionUser.locations?.map((location) => location.id) || [] : locations.map((location) => location.id)),
@@ -127,10 +136,9 @@ export default function UsersPage() {
   const staffUsers = visibleUsers.filter((user) => user.role === 'STAFF');
   const managerUsers = visibleUsers.filter((user) => user.role === 'MANAGER');
 
-  async function adminUpdateUser(userId: string, payload: Partial<Pick<DashboardUser, 'desiredHours' | 'isActive'>> & { locationIds?: string[]; skillIds?: string[] }) {
-    if (!sessionUser) return;
-    setSavingUserId(userId);
-    try {
+  const updateUserMutation = useMutation({
+    mutationFn: async ({ userId, payload }: { userId: string; payload: Partial<Pick<DashboardUser, 'desiredHours' | 'isActive'>> & { locationIds?: string[]; skillIds?: string[] } }) => {
+      if (!sessionUser) return null;
       const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
       const res = await fetch(`${API_URL}/users/${userId}/admin`, {
         method: 'PUT',
@@ -142,9 +150,21 @@ export default function UsersPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message || 'Unable to update user.');
-      setUsers((current) => current.map((user) => (user.id === userId ? { ...user, ...body } : user)));
+      return body;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['users-directory', sessionUser?.id] });
+    },
+  });
+
+  async function adminUpdateUser(userId: string, payload: Partial<Pick<DashboardUser, 'desiredHours' | 'isActive'>> & { locationIds?: string[]; skillIds?: string[] }) {
+    setSavingUserId(userId);
+    try {
+      await updateUserMutation.mutateAsync({ userId, payload });
+      toast.success('User updated.');
     } catch (error: any) {
       console.error(error);
+      toast.error(error?.message || 'Unable to update user.');
     } finally {
       setSavingUserId(null);
     }
@@ -160,16 +180,6 @@ export default function UsersPage() {
     return [...counts.entries()].sort((left, right) => right[1] - left[1]);
   }, [staffUsers]);
 
-  const allSkills = useMemo(() => {
-    const skillMap = new Map<string, { id: string; name: string }>();
-    for (const appUser of users) {
-      for (const skill of appUser.skills || []) {
-        skillMap.set(skill.id, skill);
-      }
-    }
-    return [...skillMap.values()].sort((left, right) => left.name.localeCompare(right.name));
-  }, [users]);
-
   const managerScopedLocations = useMemo(() => {
     if (sessionUser?.role === 'MANAGER') {
       const allowed = new Set(sessionUser.locations?.map((location) => location.id) || []);
@@ -184,6 +194,11 @@ export default function UsersPage() {
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in-up space-y-8 text-white">
+      {backgroundRefreshing && !loading && (
+        <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-3 text-xs font-semibold text-cyan-200">
+          Syncing live changes...
+        </div>
+      )}
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-4xl font-extrabold tracking-tight">Users</h2>
@@ -316,6 +331,9 @@ export default function UsersPage() {
                 </div>
                 {(sessionUser?.role === 'ADMIN' || sessionUser?.role === 'MANAGER') && (
                   <div className="mt-5 border-t border-slate-800 pt-5 space-y-4">
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                      Removing a certification or required skill is blocked if this staff member is already assigned to future shifts that depend on it. Reassign those shifts first.
+                    </div>
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
                         <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Edit Certified Locations</p>
