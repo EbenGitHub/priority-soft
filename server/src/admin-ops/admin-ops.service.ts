@@ -14,6 +14,8 @@ import {
 
 @Injectable()
 export class AdminOpsService {
+  private readonly activeOperations = new Set<string>();
+
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly authzService: AuthzService,
@@ -33,8 +35,29 @@ export class AdminOpsService {
     this.eventsGateway.emitOperationProgress(actorId, payload);
   }
 
-  async resetDatabase(actorId?: string) {
+  private buildOperationKey(scope: 'reset' | 'seed', target: string, actorId?: string) {
+    return `${scope}:${target}:${actorId || 'anonymous'}`;
+  }
+
+  private assertOperationNotRunning(scope: 'reset' | 'seed', target: string, actorId?: string) {
+    const key = this.buildOperationKey(scope, target, actorId);
+    if (this.activeOperations.has(key)) {
+      throw new BadRequestException(`A ${scope} operation for ${target} is already running.`);
+    }
+    this.activeOperations.add(key);
+    return key;
+  }
+
+  async startResetDatabase(actorId?: string) {
     await this.assertAdmin(actorId);
+    const operationKey = this.assertOperationNotRunning('reset', 'all', actorId);
+    void this.resetDatabase(actorId).finally(() => {
+      this.activeOperations.delete(operationKey);
+    });
+    return { accepted: true, target: 'all', scope: 'reset' };
+  }
+
+  private async resetDatabase(actorId?: string) {
     this.emitProgress(actorId, {
       scope: 'reset',
       target: 'all',
@@ -96,8 +119,16 @@ export class AdminOpsService {
     }
   }
 
-  async runSeed(target: 'all' | 'users' | 'shifts' | 'notifications' | 'audit', actorId?: string) {
+  async startSeed(target: 'all' | 'users' | 'shifts' | 'notifications' | 'audit', actorId?: string) {
     await this.assertAdmin(actorId);
+    const operationKey = this.assertOperationNotRunning('seed', target, actorId);
+    void this.runSeed(target, actorId).finally(() => {
+      this.activeOperations.delete(operationKey);
+    });
+    return { accepted: true, target, scope: 'seed' };
+  }
+
+  private async runSeed(target: 'all' | 'users' | 'shifts' | 'notifications' | 'audit', actorId?: string) {
     const countAll = async () => {
       const [users, availabilities, preferences, shifts, notifications, swaps, audit] =
         await Promise.all([

@@ -64,6 +64,23 @@ export default function OperationsPage() {
         },
         ...current,
       ].slice(0, 40));
+
+      setRunningAction((current) => {
+        if (!current) return current;
+        if (event.scope === 'seed' && current === `seed:${event.target}` && event.status !== 'running') {
+          return null;
+        }
+        if (event.scope === 'reset' && current === 'reset' && event.target === 'all' && event.status !== 'running') {
+          return null;
+        }
+        return current;
+      });
+
+      if (event.status === 'completed') {
+        toast.success(event.message);
+      } else if (event.status === 'failed') {
+        toast.error(event.message);
+      }
     });
 
     return () => {
@@ -83,10 +100,9 @@ export default function OperationsPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message || 'Operation failed.');
-      toast.success(`Seed action completed: ${target}.`);
+      toast.success(`Seed action started: ${target}. Follow the live progress feed.`);
     } catch (error: any) {
       toast.error(error.message || 'Unable to run seed action.');
-    } finally {
       setRunningAction(null);
     }
   }
@@ -104,11 +120,10 @@ export default function OperationsPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message || 'Reset failed.');
-      toast.success('Database cleared.');
+      toast.success('Database reset started. Follow the live progress feed.');
       setShowResetModal(false);
     } catch (error: any) {
       toast.error(error.message || 'Unable to reset database.');
-    } finally {
       setRunningAction(null);
     }
   }

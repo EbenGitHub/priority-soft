@@ -55,7 +55,18 @@ export class NotificationsService {
       emailEnabled: false,
     });
 
-    return this.preferenceRepository.save(preferences);
+    try {
+      return await this.preferenceRepository.save(preferences);
+    } catch (error: any) {
+      if (error?.code === '23505') {
+        const existing = await this.preferenceRepository.findOne({
+          where: { user: { id: userId } },
+          relations: ['user'],
+        });
+        if (existing) return existing;
+      }
+      throw error;
+    }
   }
 
   async listForUser(userId: string) {

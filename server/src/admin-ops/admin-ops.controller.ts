@@ -7,11 +7,11 @@ export class AdminOpsController {
 
   @Delete('reset')
   reset(@Body() body: { actorId?: string }) {
-    return this.adminOpsService.resetDatabase(body.actorId);
+    return this.adminOpsService.startResetDatabase(body.actorId);
   }
 
   @Post('seed')
   seed(@Body() body: { actorId?: string; target: 'all' | 'users' | 'shifts' | 'notifications' | 'audit' }) {
-    return this.adminOpsService.runSeed(body.target, body.actorId);
+    return this.adminOpsService.startSeed(body.target, body.actorId);
   }
 }
