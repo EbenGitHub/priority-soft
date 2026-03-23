@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Shift } from '../../lib/mockData';
 import ScheduleCalendar from '../calendar/ScheduleCalendar';
 import { toast } from 'sonner';
@@ -28,6 +28,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
   const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
   const [actingSwapId, setActingSwapId] = useState<string | null>(null);
   const [fairnessScore, setFairnessScore] = useState<number | null>(null);
+  const [selectedFairnessStaffId, setSelectedFairnessStaffId] = useState<string>('');
 
   useEffect(() => {
     setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
@@ -99,6 +100,7 @@ export default function ManagerDashboard({ user }: { user: any }) {
   });
   const selectedLocation = locations.find((location: any) => location.id === selectedLoc);
   const selectedLocationShifts = shifts.filter((shift) => shift.location?.id === selectedLoc);
+  const locationStaff = staff.filter((member) => member.role === 'STAFF');
   const coverageGroups = groupShiftCoverage(selectedLocationShifts, viewerTimeZone);
   const overtimeCost = (() => {
     const byStaff = new Map<string, number>();
@@ -134,6 +136,57 @@ export default function ManagerDashboard({ user }: { user: any }) {
     .filter((item) => item.totalHours > 0)
     .sort((left, right) => right.totalHours - left.totalHours)
     .slice(0, 5);
+  const isSaturdayNightShift = (shift: Shift) => {
+    const timing = getShiftTiming(shift, viewerTimeZone);
+    return timing.locationWeekday === 6 && timing.startUtc.toLocaleTimeString('en-US', {
+      timeZone: shift.location?.timezone || 'UTC',
+      hour: '2-digit',
+      hour12: false,
+    }) >= '17';
+  };
+  const saturdayNightShifts = selectedLocationShifts.filter(
+    (shift) => shift.assignedStaff?.id && isSaturdayNightShift(shift),
+  );
+  const fairnessInvestigation = useMemo(() => {
+    const staffById = new Map(locationStaff.map((member) => [member.id, member]));
+    const counts = locationStaff.map((member) => ({
+      staff: member,
+      shiftCount: saturdayNightShifts.filter((shift) => shift.assignedStaff?.id === member.id).length,
+      shifts: saturdayNightShifts.filter((shift) => shift.assignedStaff?.id === member.id),
+    }));
+    const selectedStaff =
+      staffById.get(selectedFairnessStaffId) || counts[0]?.staff || null;
+    const selected = counts.find((item) => item.staff.id === selectedStaff?.id) || null;
+    const average = counts.length
+      ? counts.reduce((total, item) => total + item.shiftCount, 0) / counts.length
+      : 0;
+    const maxCount = counts.length ? Math.max(...counts.map((item) => item.shiftCount)) : 0;
+
+    return {
+      counts,
+      selected,
+      average,
+      maxCount,
+      summary:
+        !selected
+          ? 'No staff available for fairness review.'
+          : selected.shiftCount === 0
+            ? `${selected.staff.name} has not received any Saturday night shifts in the current location view.`
+            : selected.shiftCount < average
+              ? `${selected.staff.name} has received fewer Saturday night shifts than the team average.`
+              : `${selected.staff.name} has received Saturday night shifts at or above the current team average.`,
+    };
+  }, [locationStaff, saturdayNightShifts, selectedFairnessStaffId]);
+
+  useEffect(() => {
+    if (!locationStaff.length) {
+      setSelectedFairnessStaffId('');
+      return;
+    }
+    if (!selectedFairnessStaffId || !locationStaff.some((member) => member.id === selectedFairnessStaffId)) {
+      setSelectedFairnessStaffId(locationStaff[0].id);
+    }
+  }, [locationStaff, selectedFairnessStaffId]);
 
   return (
     <div className="space-y-8 animate-fade-in-up">
@@ -210,6 +263,108 @@ export default function ManagerDashboard({ user }: { user: any }) {
                  )}
                </div>
              ))}
+           </div>
+         </div>
+       )}
+
+       {selectedLoc && locationStaff.length > 0 && (
+         <div className="rounded-[2rem] border border-fuchsia-500/20 bg-fuchsia-500/5 p-8 shadow-2xl">
+           <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+             <div>
+               <h3 className="text-2xl font-bold text-white">Fairness Investigation</h3>
+               <p className="mt-2 text-sm text-slate-300">
+                 Review Saturday night distribution for a specific employee and compare it with the rest of the team.
+               </p>
+             </div>
+             <div className="min-w-[260px]">
+               <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                 Investigate Staff Member
+               </label>
+               <select
+                 value={selectedFairnessStaffId}
+                 onChange={(event) => setSelectedFairnessStaffId(event.target.value)}
+                 className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white"
+               >
+                 {locationStaff.map((member) => (
+                   <option key={member.id} value={member.id}>
+                     {member.name}
+                   </option>
+                 ))}
+               </select>
+             </div>
+           </div>
+
+           <div className="grid gap-4 lg:grid-cols-4">
+             <div className="rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5 shadow-lg">
+               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Selected Staff</p>
+               <p className="mt-3 text-2xl font-black text-white">{fairnessInvestigation.selected?.staff.name || '--'}</p>
+             </div>
+             <div className="rounded-[1.5rem] border border-fuchsia-500/20 bg-fuchsia-500/10 p-5 shadow-lg">
+               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-fuchsia-300">Saturday Nights</p>
+               <p className="mt-3 text-3xl font-black text-white">{fairnessInvestigation.selected?.shiftCount ?? 0}</p>
+             </div>
+             <div className="rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5 shadow-lg">
+               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Team Average</p>
+               <p className="mt-3 text-3xl font-black text-white">{fairnessInvestigation.average.toFixed(1)}</p>
+             </div>
+             <div className="rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5 shadow-lg">
+               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Highest Team Count</p>
+               <p className="mt-3 text-3xl font-black text-white">{fairnessInvestigation.maxCount}</p>
+             </div>
+           </div>
+
+           <div className="mt-6 rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5">
+             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Investigation Summary</p>
+             <p className="mt-3 text-base text-white">{fairnessInvestigation.summary}</p>
+           </div>
+
+           <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+             <div className="rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5">
+               <p className="mb-4 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Team Comparison</p>
+               <div className="space-y-3">
+                 {fairnessInvestigation.counts
+                   .sort((left, right) => right.shiftCount - left.shiftCount || left.staff.name.localeCompare(right.staff.name))
+                   .map((item) => (
+                     <div key={item.staff.id} className="flex items-center gap-4">
+                       <p className="w-32 truncate text-sm font-semibold text-white">{item.staff.name}</p>
+                       <div className="h-3 flex-1 overflow-hidden rounded-full border border-slate-700 bg-slate-950">
+                         <div
+                           className={`h-full rounded-full ${
+                             item.staff.id === fairnessInvestigation.selected?.staff.id ? 'bg-fuchsia-500' : 'bg-slate-600'
+                           }`}
+                           style={{
+                             width: `${fairnessInvestigation.maxCount === 0 ? 0 : (item.shiftCount / fairnessInvestigation.maxCount) * 100}%`,
+                           }}
+                         />
+                       </div>
+                       <p className="w-8 text-right font-mono text-xs text-slate-400">{item.shiftCount}</p>
+                     </div>
+                   ))}
+               </div>
+             </div>
+
+             <div className="rounded-[1.5rem] border border-slate-700 bg-slate-900 p-5">
+               <p className="mb-4 text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Actual Saturday Night Assignments</p>
+               <div className="space-y-3">
+                 {(fairnessInvestigation.selected?.shifts || []).map((shift) => {
+                   const timing = getShiftTiming(shift, viewerTimeZone);
+                   return (
+                     <div key={shift.id} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
+                       <p className="text-sm font-semibold text-white">{shift.location?.name}</p>
+                       <p className="mt-1 text-xs text-slate-400">{shift.requiredSkill?.name}</p>
+                       <p className="mt-2 text-xs font-mono text-fuchsia-300">
+                         {timing.locationDate} • {timing.locationTimeRange}
+                       </p>
+                     </div>
+                   );
+                 })}
+                 {(fairnessInvestigation.selected?.shifts || []).length === 0 && (
+                   <div className="rounded-xl border border-dashed border-slate-700 bg-slate-950 p-6 text-center text-sm text-slate-500">
+                     No Saturday night assignments found for this staff member in the selected location view.
+                   </div>
+                 )}
+               </div>
+             </div>
            </div>
          </div>
        )}
