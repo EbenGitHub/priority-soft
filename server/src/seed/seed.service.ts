@@ -315,6 +315,12 @@ export class SeedService implements OnApplicationBootstrap {
     const skillCook = await this.findOrCreateSkill('line cook');
     const skillServer = await this.findOrCreateSkill('server');
     const skillHost = await this.findOrCreateSkill('host');
+    const skillBarback = await this.findOrCreateSkill('barback');
+    const skillPrepCook = await this.findOrCreateSkill('prep cook');
+    const skillDishwasher = await this.findOrCreateSkill('dishwasher');
+    const skillExpo = await this.findOrCreateSkill('expo');
+    const skillShiftLead = await this.findOrCreateSkill('shift lead');
+    const skillPastry = await this.findOrCreateSkill('pastry cook');
 
     return {
       loc1,
@@ -326,6 +332,12 @@ export class SeedService implements OnApplicationBootstrap {
       skillCook,
       skillServer,
       skillHost,
+      skillBarback,
+      skillPrepCook,
+      skillDishwasher,
+      skillExpo,
+      skillShiftLead,
+      skillPastry,
     };
   }
 
@@ -364,6 +376,12 @@ export class SeedService implements OnApplicationBootstrap {
       skillCook,
       skillServer,
       skillHost,
+      skillBarback,
+      skillPrepCook,
+      skillDishwasher,
+      skillExpo,
+      skillShiftLead,
+      skillPastry,
     } = await this.ensureCoreReferences();
 
     const admin = await this.findOrCreateUser({
@@ -393,7 +411,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 35,
       locations: [loc1],
-      skills: [skillServer, skillHost],
+      skills: [skillServer, skillHost, skillExpo],
     });
 
     const staff2 = await this.findOrCreateUser({
@@ -402,7 +420,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 40,
       locations: [loc3, loc4],
-      skills: [skillCook],
+      skills: [skillCook, skillPrepCook, skillDishwasher],
     });
 
     const staff3 = await this.findOrCreateUser({
@@ -411,7 +429,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 20,
       locations: [loc1, loc2],
-      skills: [skillBartender, skillServer],
+      skills: [skillBartender, skillServer, skillBarback],
     });
 
     const staff4 = await this.findOrCreateUser({
@@ -420,7 +438,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 32,
       locations: [loc1, loc2],
-      skills: [skillServer, skillHost],
+      skills: [skillServer, skillHost, skillShiftLead],
     });
 
     const staff5 = await this.findOrCreateUser({
@@ -429,7 +447,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 30,
       locations: [loc1, loc3],
-      skills: [skillServer, skillBartender],
+      skills: [skillServer, skillBartender, skillBarback, skillShiftLead],
     });
 
     const staff6 = await this.findOrCreateUser({
@@ -438,7 +456,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 38,
       locations: [loc1, loc2],
-      skills: [skillBartender, skillServer],
+      skills: [skillBartender, skillServer, skillBarback],
     });
 
     const staff7 = await this.findOrCreateUser({
@@ -447,7 +465,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 42,
       locations: [loc3, loc4],
-      skills: [skillCook],
+      skills: [skillCook, skillPrepCook, skillPastry],
     });
 
     const staff8 = await this.findOrCreateUser({
@@ -456,7 +474,7 @@ export class SeedService implements OnApplicationBootstrap {
       role: Role.STAFF,
       desiredHours: 24,
       locations: [loc2],
-      skills: [skillHost, skillServer],
+      skills: [skillHost, skillServer, skillExpo],
     });
 
     for (let day = 1; day <= 5; day++) {
