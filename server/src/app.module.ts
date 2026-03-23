@@ -13,6 +13,8 @@ import { EventsModule } from './events/events.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { AuditModule } from './audit/audit.module';
+import { SettingsModule } from './settings/settings.module';
+import { AdminOpsModule } from './admin-ops/admin-ops.module';
 
 @Module({
   imports: [
@@ -40,6 +42,8 @@ import { AuditModule } from './audit/audit.module';
     NotificationsModule,
     CalendarModule,
     AuditModule,
+    SettingsModule,
+    AdminOpsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
