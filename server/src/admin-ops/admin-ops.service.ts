@@ -5,6 +5,12 @@ import { AuthzService } from '../authz/authz.service';
 import { Permission } from '../authz/permissions.enum';
 import { SeedService } from '../seed/seed.service';
 import { EventsGateway } from '../events/events.gateway';
+import {
+  ADMIN_USERS_SELECT_SQL,
+  INSERT_ADMIN_USER_SQL,
+  RESET_DATABASE_SQL,
+  RESET_TABLE_COUNTS_SQL,
+} from './admin-ops.sql';
 
 @Injectable()
 export class AdminOpsService {
@@ -36,20 +42,7 @@ export class AdminOpsService {
       message: 'Scanning tables before reset...',
     });
 
-    const tableCounts = await this.dataSource.query(`
-      SELECT 'audit_logs' AS table_name, COUNT(*)::int AS count FROM "audit_logs"
-      UNION ALL SELECT 'swap_requests', COUNT(*)::int FROM "swap_requests"
-      UNION ALL SELECT 'notifications', COUNT(*)::int FROM "notifications"
-      UNION ALL SELECT 'notification_preferences', COUNT(*)::int FROM "notification_preferences"
-      UNION ALL SELECT 'availabilities', COUNT(*)::int FROM "availabilities"
-      UNION ALL SELECT 'shifts', COUNT(*)::int FROM "shifts"
-      UNION ALL SELECT 'user_skills', COUNT(*)::int FROM "user_skills"
-      UNION ALL SELECT 'user_locations', COUNT(*)::int FROM "user_locations"
-      UNION ALL SELECT 'users', COUNT(*)::int FROM "users"
-      UNION ALL SELECT 'skills', COUNT(*)::int FROM "skills"
-      UNION ALL SELECT 'locations', COUNT(*)::int FROM "locations"
-      UNION ALL SELECT 'schedule_settings', COUNT(*)::int FROM "schedule_settings"
-    `);
+    const tableCounts = await this.dataSource.query(RESET_TABLE_COUNTS_SQL);
 
     for (const row of tableCounts as Array<{ table_name: string; count: number }>) {
       this.emitProgress(actorId, {
@@ -62,33 +55,19 @@ export class AdminOpsService {
     }
 
     try {
-      const adminUsers = await this.dataSource.query(
-        `SELECT id, name, email, password, role, "desiredHours" FROM "users" WHERE role = 'ADMIN'`,
-      );
+      const adminUsers = await this.dataSource.query(ADMIN_USERS_SELECT_SQL);
 
-      await this.dataSource.query(`
-        TRUNCATE TABLE
-          "audit_logs",
-          "swap_requests",
-          "notifications",
-          "notification_preferences",
-          "availabilities",
-          "shifts",
-          "user_skills",
-          "user_locations",
-          "users",
-          "skills",
-          "locations",
-          "schedule_settings"
-        RESTART IDENTITY CASCADE
-      `);
+      await this.dataSource.query(RESET_DATABASE_SQL);
 
       for (const admin of adminUsers) {
-        await this.dataSource.query(
-          `INSERT INTO "users" ("id", "name", "email", "password", "role", "desiredHours")
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [admin.id, admin.name, admin.email, admin.password, admin.role, admin.desiredHours ?? 0],
-        );
+        await this.dataSource.query(INSERT_ADMIN_USER_SQL, [
+          admin.id,
+          admin.name,
+          admin.email,
+          admin.password,
+          admin.role,
+          admin.desiredHours ?? 0,
+        ]);
       }
 
       this.eventsGateway.emitSessionInvalidated(
