@@ -5,8 +5,8 @@ import { Location, Skill, Shift, Staff } from '../../../lib/mockData';
 import { validateAssignment, ValidationResult } from '../../../lib/schedulingRules';
 import { FairnessAnalytics } from '../../../lib/fairnessMetrics';
 import { useRealtime } from '../../../lib/useRealtime';
-import { fetchCalendarShifts, previewShiftTiming } from '../../../lib/calendarApi';
-import { buildShiftUtcRange, getDateTimePartsInTimeZone, getShiftTiming } from '../../../lib/calendarTime';
+import { fetchCalendarShifts } from '../../../lib/calendarApi';
+import { buildShiftUtcRange } from '../../../lib/calendarTime';
 import { fetchShiftAuditLogs } from '../../../lib/auditApi';
 import { AuditLogRecord } from '../../../lib/auditTypes';
 import { getMockAuditLogsForShift } from '../../../lib/mockAuditLogs';
@@ -24,11 +24,12 @@ import ShiftEditorModal from '../../../components/schedules/ShiftEditorModal';
 import ShiftAuditModal from '../../../components/schedules/ShiftAuditModal';
 import { toast } from 'sonner';
 import { getShiftCoverageGroupId, groupShiftCoverage } from '../../../lib/shiftCoverage';
+import { useViewerTimeZone } from '../../../hooks/useViewerTimeZone';
+import { useShiftEditor } from '../../../hooks/useShiftEditor';
 import {
   AssignmentConflictClassification,
   OverrideRequest,
   SchedulingActor,
-  ShiftPreview,
 } from '../../../components/schedules/types';
 
 export default function SchedulingPage() {
@@ -38,27 +39,13 @@ export default function SchedulingPage() {
   const [staffList, setStaffList] = useState<Staff[]>([]);
   
   const [selectedLocation, setSelectedLocation] = useState<string>('');
-  const [showShiftModal, setShowShiftModal] = useState(false);
-  const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [assignModalShift, setAssignModalShift] = useState<Shift | null>(null);
   const [historyShift, setHistoryShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<AuditLogRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-
-  const [newShiftDate, setNewShiftDate] = useState('');
-  const [newShiftEndDate, setNewShiftEndDate] = useState('');
-  const [newShiftStart, setNewShiftStart] = useState('');
-  const [newShiftEnd, setNewShiftEnd] = useState('');
-  const [newShiftLocation, setNewShiftLocation] = useState('');
-  const [startDateTime, setStartDateTime] = useState<Date | null>(null);
-  const [endDateTime, setEndDateTime] = useState<Date | null>(null);
-  const [newShiftSkill, setNewShiftSkill] = useState('');
-  const [newShiftHeadcount, setNewShiftHeadcount] = useState(1);
-  const [newShiftSkipManagerApproval, setNewShiftSkipManagerApproval] = useState(false);
   const [selectedWeekStart, setSelectedWeekStart] = useState('');
-  const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
+  const viewerTimeZone = useViewerTimeZone();
   const [actor, setActor] = useState<SchedulingActor>({});
-  const [shiftPreview, setShiftPreview] = useState<ShiftPreview | null>(null);
 
   const [validationData, setValidationData] = useState<ValidationResult | null>(null);
   const [fairnessData, setFairnessData] = useState<FairnessAnalytics | null>(null);
@@ -85,11 +72,40 @@ export default function SchedulingPage() {
       ? locations.filter((location) => actor.locationIds?.includes(location.id))
       : locations;
   const activeLocation = availableLocations.find((location) => location.id === selectedLocation) || null;
-  const activeDraftLocation = locations.find((location) => location.id === newShiftLocation) || activeLocation || null;
-  const isOvernightDraft = shiftPreview?.isOvernight || false;
   const canManageSchedules = actor.actorRole === 'MANAGER' || actor.actorRole === 'ADMIN';
-  const planningMinDate = new Date();
-  const shiftDateOrderInvalid = Boolean(startDateTime && endDateTime && endDateTime.getTime() <= startDateTime.getTime());
+
+  const {
+    showShiftModal,
+    setShowShiftModal,
+    editingShift,
+    startDateTime,
+    endDateTime,
+    newShiftLocation,
+    setNewShiftLocation,
+    newShiftSkill,
+    setNewShiftSkill,
+    newShiftHeadcount,
+    setNewShiftHeadcount,
+    newShiftSkipManagerApproval,
+    setNewShiftSkipManagerApproval,
+    shiftPreview,
+    activeDraftLocation,
+    planningMinDate,
+    shiftDateOrderInvalid,
+    isOvernightDraft,
+    setShiftBuilderStart,
+    setShiftBuilderEnd,
+    openCreateShiftModal,
+    openEditShiftModal,
+    resetShiftForm,
+    getLocationTimedDraft,
+  } = useShiftEditor({
+    locations,
+    skills,
+    selectedLocation,
+    selectedWeekStart,
+    viewerTimeZone,
+  });
 
   const classifyAssignmentConflict = (
     result: ValidationResult,
@@ -116,80 +132,6 @@ export default function SchedulingPage() {
   const isWarnOnlyConflict = (result: ValidationResult) => {
     const conflict = classifyAssignmentConflict(result);
     return conflict.kind === 'occupied' || conflict.kind === 'availability';
-  };
-
-  const setShiftBuilderStart = (value: Date | null) => {
-    setStartDateTime(value);
-    if (!value) {
-      setNewShiftDate('');
-      setNewShiftStart('');
-      return;
-    }
-
-    const year = value.getFullYear();
-    const month = `${value.getMonth() + 1}`.padStart(2, '0');
-    const day = `${value.getDate()}`.padStart(2, '0');
-    const hours = `${value.getHours()}`.padStart(2, '0');
-    const minutes = `${value.getMinutes()}`.padStart(2, '0');
-    setNewShiftDate(`${year}-${month}-${day}`);
-    setNewShiftStart(`${hours}:${minutes}`);
-  };
-
-  const setShiftBuilderEnd = (value: Date | null) => {
-    setEndDateTime(value);
-    if (!value) {
-      setNewShiftEndDate('');
-      setNewShiftEnd('');
-      return;
-    }
-
-    const year = value.getFullYear();
-    const month = `${value.getMonth() + 1}`.padStart(2, '0');
-    const day = `${value.getDate()}`.padStart(2, '0');
-    const hours = `${value.getHours()}`.padStart(2, '0');
-    const minutes = `${value.getMinutes()}`.padStart(2, '0');
-    setNewShiftEndDate(`${year}-${month}-${day}`);
-    setNewShiftEnd(`${hours}:${minutes}`);
-  };
-
-  const resetShiftForm = () => {
-    setEditingShift(null);
-    setStartDateTime(null);
-    setEndDateTime(null);
-    setNewShiftDate('');
-    setNewShiftEndDate('');
-    setNewShiftStart('');
-    setNewShiftEnd('');
-    setNewShiftHeadcount(1);
-    setNewShiftSkipManagerApproval(false);
-    setShiftPreview(null);
-  };
-
-  const openCreateShiftModal = () => {
-    const weekAnchor = selectedWeekStart ? new Date(`${selectedWeekStart}T09:00:00Z`) : new Date();
-    const nextHour = new Date(Math.max(weekAnchor.getTime(), planningMinDate.getTime()));
-    nextHour.setMinutes(0, 0, 0);
-    const defaultEnd = new Date(nextHour);
-    defaultEnd.setHours(defaultEnd.getHours() + 8);
-    resetShiftForm();
-    setNewShiftLocation(selectedLocation || locations[0]?.id || '');
-    setShiftBuilderStart(nextHour);
-    setShiftBuilderEnd(defaultEnd);
-    setShowShiftModal(true);
-  };
-
-  const openEditShiftModal = (shift: Shift) => {
-    resetShiftForm();
-    setEditingShift(shift);
-    setNewShiftLocation(shift.location.id);
-    setNewShiftSkill(shift.requiredSkill.id);
-    setNewShiftHeadcount(shift.headcountNeeded || 1);
-    setNewShiftSkipManagerApproval(Boolean(shift.skipManagerApproval));
-    const start = shift.startUtc ? new Date(shift.startUtc) : new Date(`${shift.date}T${shift.startTime}`);
-    const end = shift.endUtc ? new Date(shift.endUtc) : new Date(`${shift.endDate || shift.date}T${shift.endTime}`);
-    setShiftBuilderStart(start);
-    setShiftBuilderEnd(end);
-    setShowShiftModal(true);
   };
 
   const moveSelectedWeek = (direction: -1 | 1) => {
@@ -224,11 +166,6 @@ export default function SchedulingPage() {
             ? current
             : visibleLocations[0].id,
         );
-        setNewShiftLocation((current) =>
-          current && visibleLocations.some((location: Location) => location.id === current)
-            ? current
-            : visibleLocations[0].id,
-        );
       }
 
       const allStaff = uData.filter((u: any) => u.role === 'STAFF');
@@ -240,11 +177,6 @@ export default function SchedulingPage() {
       });
       const skillsArr = Array.from(uniqueSkills.values()) as Skill[];
       setSkills(skillsArr);
-      if (skillsArr.length > 0) {
-        setNewShiftSkill((current) =>
-          current && skillsArr.some((skill) => skill.id === current) ? current : skillsArr[0].id,
-        );
-      }
     } catch (err) {
       console.error(err);
     }
@@ -282,7 +214,6 @@ export default function SchedulingPage() {
   });
 
   useEffect(() => {
-    setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     const today = new Date();
     const dayOffset = (today.getUTCDay() + 6) % 7;
     today.setUTCDate(today.getUTCDate() - dayOffset);
@@ -308,10 +239,7 @@ export default function SchedulingPage() {
     if (!selectedLocation || !availableLocations.some((location) => location.id === selectedLocation)) {
       setSelectedLocation(availableLocations[0].id);
     }
-    if (!newShiftLocation || !availableLocations.some((location) => location.id === newShiftLocation)) {
-      setNewShiftLocation(availableLocations[0].id);
-    }
-  }, [availableLocations, newShiftLocation, selectedLocation]);
+  }, [availableLocations, selectedLocation]);
 
   useEffect(() => {
     async function loadSettings() {
@@ -378,66 +306,6 @@ export default function SchedulingPage() {
     fetchFairness();
   }, [selectedLocation, viewerTimeZone]);
 
-  useEffect(() => {
-    async function loadPreview() {
-      const locationTimedDraft = getLocationTimedDraft();
-      if (!locationTimedDraft) {
-        setShiftPreview(null);
-        return;
-      }
-
-      try {
-        const preview = await previewShiftTiming({
-          locationId: newShiftLocation,
-          date: locationTimedDraft.date,
-          endDate: locationTimedDraft.endDate,
-          startTime: locationTimedDraft.startTime,
-          endTime: locationTimedDraft.endTime,
-          viewerTimeZone,
-        });
-        setShiftPreview(preview);
-      } catch {
-        const fallback = buildShiftUtcRange(
-          locationTimedDraft.date,
-          locationTimedDraft.startTime,
-          locationTimedDraft.endTime,
-          locationTimedDraft.location.timezone,
-          locationTimedDraft.endDate,
-        );
-        const fallbackShift = {
-          id: 'preview',
-          location: locationTimedDraft.location,
-          date: locationTimedDraft.date,
-          endDate: locationTimedDraft.endDate,
-          startTime: locationTimedDraft.startTime,
-          endTime: locationTimedDraft.endTime,
-          startUtc: fallback.startUtc.toISOString(),
-          endUtc: fallback.endUtc.toISOString(),
-          isOvernight: fallback.isOvernight,
-          requiredSkill: skills.find((skill) => skill.id === newShiftSkill) || null,
-          assignedStaff: null,
-          published: false,
-          skipManagerApproval: newShiftSkipManagerApproval,
-        } as Shift;
-        const timing = getShiftTiming(fallbackShift, viewerTimeZone);
-        setShiftPreview({
-          startUtc: timing.startUtc.toISOString(),
-          endUtc: timing.endUtc.toISOString(),
-          isOvernight: timing.isOvernight,
-          durationHours: timing.durationHours,
-          locationDate: timing.locationDate,
-          locationTimeRange: timing.locationTimeRange,
-          locationTimeZone: timing.locationTimeZone,
-          viewerDate: timing.viewerDate,
-          viewerTimeRange: timing.viewerTimeRange,
-          viewerTimeZone: timing.viewerTimeZone,
-        });
-      }
-    }
-
-    loadPreview();
-  }, [locations, startDateTime, endDateTime, newShiftSkill, newShiftLocation, newShiftSkipManagerApproval, skills, viewerTimeZone]);
-
   const locShifts = shifts.filter(s => s.location?.id === selectedLocation);
   const coverageGroups = groupShiftCoverage(locShifts, viewerTimeZone);
   const activeAssignmentCoverageGroup = assignModalShift
@@ -476,24 +344,6 @@ export default function SchedulingPage() {
   };
 
   const isCutoffOverrideError = (payload: any) => payload?.code === 'CUTOFF_OVERRIDE_REQUIRED';
-
-  const getLocationTimedDraft = () => {
-    const location = locations.find((item) => item.id === newShiftLocation);
-    if (!location || !startDateTime || !endDateTime) {
-      return null;
-    }
-
-    const start = getDateTimePartsInTimeZone(startDateTime, location.timezone);
-    const end = getDateTimePartsInTimeZone(endDateTime, location.timezone);
-
-    return {
-      location,
-      date: start.date,
-      endDate: end.date,
-      startTime: start.time,
-      endTime: end.time,
-    };
-  };
 
   const submitShiftForm = async (cutoffReason?: string) => {
     const locationTimedDraft = getLocationTimedDraft();

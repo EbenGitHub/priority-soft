@@ -4,23 +4,21 @@ import DatePicker from 'react-datepicker';
 import { Availability, Shift, Staff } from '../../lib/mockData';
 import { validateAssignment } from '../../lib/schedulingRules';
 import { getShiftTiming } from '../../lib/calendarTime';
-import { toast } from 'sonner';
 import {
   actOnSwapRequest,
-  createAvailability,
   createDropRequest,
   createSwapRequest,
-  deleteAvailability,
   fetchStaffDashboardState,
   fetchSwapRequests,
   StaffSwapRequest,
-  updateAvailability,
-  updateDesiredHours,
 } from '../../lib/staffDashboardApi';
 import { useRealtime } from '../../lib/useRealtime';
+import { useViewerTimeZone } from '../../hooks/useViewerTimeZone';
+import { useStaffProfileForms } from '../../hooks/useStaffProfileForms';
 import ModalShell from '../ui/ModalShell';
 import ReasonModal from '../ui/ReasonModal';
 import StaffAvailabilityCalendar from '../calendar/StaffAvailabilityCalendar';
+import { toast } from 'sonner';
 
 export default function StaffDashboard({ user }: { user: any }) {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -28,19 +26,7 @@ export default function StaffDashboard({ user }: { user: any }) {
   const [allStaff, setAllStaff] = useState<Staff[]>([]);
   const [profile, setProfile] = useState<Staff | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewerTimeZone, setViewerTimeZone] = useState('UTC');
-  const [desiredHours, setDesiredHours] = useState(String(user.desiredHours || ''));
-  const [savingDesiredHours, setSavingDesiredHours] = useState(false);
-  const [savingAvailability, setSavingAvailability] = useState(false);
-  const [availabilityType, setAvailabilityType] = useState<'RECURRING' | 'EXCEPTION'>('RECURRING');
-  const [availabilityDayOfWeek, setAvailabilityDayOfWeek] = useState('1');
-  const [availabilityDate, setAvailabilityDate] = useState('');
-  const [availabilityExceptionDate, setAvailabilityExceptionDate] = useState<Date | null>(null);
-  const [availabilityStartTime, setAvailabilityStartTime] = useState('09:00');
-  const [availabilityEndTime, setAvailabilityEndTime] = useState('17:00');
-  const [availabilityLocationId, setAvailabilityLocationId] = useState('');
-  const [editingAvailabilityId, setEditingAvailabilityId] = useState<string | null>(null);
-  const [deletingAvailabilityId, setDeletingAvailabilityId] = useState<string | null>(null);
+  const viewerTimeZone = useViewerTimeZone();
 
   const [showSwapModal, setShowSwapModal] = useState<Shift | null>(null);
   const [swapTargetId, setSwapTargetId] = useState('');
@@ -50,6 +36,45 @@ export default function StaffDashboard({ user }: { user: any }) {
   const [submittingSwap, setSubmittingSwap] = useState(false);
   const [submittingDrop, setSubmittingDrop] = useState(false);
   const [actingRequestId, setActingRequestId] = useState<string | null>(null);
+
+  const {
+    desiredHours,
+    setDesiredHours,
+    savingDesiredHours,
+    savingAvailability,
+    availabilityType,
+    setAvailabilityType,
+    availabilityDayOfWeek,
+    setAvailabilityDayOfWeek,
+    availabilityDate,
+    availabilityExceptionDate,
+    availabilityStartTime,
+    setAvailabilityStartTime,
+    availabilityEndTime,
+    setAvailabilityEndTime,
+    availabilityLocationId,
+    setAvailabilityLocationId,
+    editingAvailabilityId,
+    deletingAvailabilityId,
+    availabilityItems,
+    certifiedLocations,
+    getAvailabilityLocationLabel,
+    saveDesiredHours,
+    submitAvailability,
+    startEditingAvailability,
+    resetAvailabilityForm,
+    handleDeleteAvailability,
+    setExceptionDate,
+    syncFormFromProfile,
+  } = useStaffProfileForms({
+    userId: user.id,
+    userDesiredHours: user.desiredHours,
+    profile,
+    viewerTimeZone,
+    refreshProfile: async () => {
+      await fetchLiveState();
+    },
+  });
 
   useRealtime(() => {
     fetchLiveState();
@@ -62,10 +87,8 @@ export default function StaffDashboard({ user }: { user: any }) {
       setShifts(state.shifts);
       setAllStaff(state.staff);
       if (state.profile) {
-        const me = state.profile;
-        setProfile(me);
-        setDesiredHours(String(me.desiredHours ?? ''));
-        setAvailabilityLocationId((current) => current || me.locations?.[0]?.id || '');
+        setProfile(state.profile);
+        syncFormFromProfile(state.profile);
       }
     } catch(err) {}
     setLoading(false);
@@ -78,122 +101,9 @@ export default function StaffDashboard({ user }: { user: any }) {
   };
 
   useEffect(() => {
-    setViewerTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-  }, []);
-
-  useEffect(() => {
     fetchLiveState();
     refreshSwaps();
   }, [user.id]);
-
-  const saveDesiredHours = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingDesiredHours(true);
-    try {
-      const updated = await updateDesiredHours(user.id, Math.max(0, Number(desiredHours) || 0));
-      setProfile(updated);
-      setDesiredHours(String(updated.desiredHours ?? ''));
-      localStorage.setItem('shiftSync_user', JSON.stringify(updated));
-      toast.success('Desired hours updated.');
-    } catch (error: any) {
-      toast.error(error.message || 'Unable to update desired hours.');
-    } finally {
-      setSavingDesiredHours(false);
-    }
-  };
-
-  const submitAvailability = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (availabilityStartTime >= availabilityEndTime) {
-      toast.error('Availability end must be later than the start time.');
-      return;
-    }
-    const selectedAvailabilityLocation = profile?.locations?.find(
-      (location) => location.id === availabilityLocationId,
-    );
-    if (!selectedAvailabilityLocation) {
-      toast.error('Choose one of your certified locations for this availability window.');
-      return;
-    }
-
-    setSavingAvailability(true);
-    try {
-      const payload: any = {
-        type: availabilityType,
-        startTime: `${availabilityStartTime}:00`,
-        endTime: `${availabilityEndTime}:00`,
-        timezone: selectedAvailabilityLocation.timezone || viewerTimeZone,
-      };
-      if (availabilityType === 'RECURRING') {
-        payload.dayOfWeek = Number(availabilityDayOfWeek);
-      } else {
-        payload.date = availabilityDate;
-      }
-
-      if (editingAvailabilityId) {
-        await updateAvailability(user.id, editingAvailabilityId, payload);
-      } else {
-        await createAvailability(user.id, payload);
-      }
-
-      await fetchLiveState();
-      setEditingAvailabilityId(null);
-      setAvailabilityDate('');
-      setAvailabilityExceptionDate(null);
-      toast.success(editingAvailabilityId ? 'Availability updated.' : 'Availability added.');
-    } catch (error: any) {
-      toast.error(error.message || (editingAvailabilityId ? 'Unable to update availability.' : 'Unable to add availability.'));
-    } finally {
-      setSavingAvailability(false);
-    }
-  };
-
-  const startEditingAvailability = (availability: Availability) => {
-    setEditingAvailabilityId(availability.id);
-    setAvailabilityType(availability.type);
-    setAvailabilityDayOfWeek(String(availability.dayOfWeek ?? '1'));
-    setAvailabilityStartTime(availability.startTime.slice(0, 5));
-    setAvailabilityEndTime(availability.endTime.slice(0, 5));
-    const matchingLocation =
-      profile?.locations?.find((location) => location.timezone === availability.timezone) ||
-      profile?.locations?.[0] ||
-      null;
-    setAvailabilityLocationId(matchingLocation?.id || '');
-    if (availability.type === 'EXCEPTION' && availability.date) {
-      setAvailabilityDate(availability.date);
-      setAvailabilityExceptionDate(new Date(`${availability.date}T12:00:00`));
-    } else {
-      setAvailabilityDate('');
-      setAvailabilityExceptionDate(null);
-    }
-  };
-
-  const resetAvailabilityForm = () => {
-    setEditingAvailabilityId(null);
-    setAvailabilityType('RECURRING');
-    setAvailabilityDayOfWeek('1');
-    setAvailabilityDate('');
-    setAvailabilityExceptionDate(null);
-    setAvailabilityStartTime('09:00');
-    setAvailabilityEndTime('17:00');
-    setAvailabilityLocationId(profile?.locations?.[0]?.id || '');
-  };
-
-  const handleDeleteAvailability = async (availabilityId: string) => {
-    setDeletingAvailabilityId(availabilityId);
-    try {
-      await deleteAvailability(user.id, availabilityId);
-      await fetchLiveState();
-      if (editingAvailabilityId === availabilityId) {
-        resetAvailabilityForm();
-      }
-      toast.success('Availability deleted.');
-    } catch (error: any) {
-      toast.error(error.message || 'Unable to delete availability.');
-    } finally {
-      setDeletingAvailabilityId(null);
-    }
-  };
 
   const handleDrop = async (shiftId: string, reason: string) => {
     setSubmittingDrop(true);
@@ -284,33 +194,7 @@ export default function StaffDashboard({ user }: { user: any }) {
   const coverageDrops = swaps.filter(s => s.type === 'DROP' && s.status === 'PENDING_PEER' && s.initiatorUser?.id !== user.id);
   const incomingSwaps = swaps.filter(s => s.type === 'SWAP' && s.status === 'PENDING_PEER' && s.targetUser?.id === user.id);
   const myUpdates = swaps.filter(s => s.initiatorUser?.id === user.id && ['APPROVED', 'REJECTED', 'CANCELLED'].includes(s.status));
-  const availabilityItems = profile?.availabilities || [];
-  const certifiedLocations = profile?.locations || [];
   const weekdayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const getAvailabilityLocationLabel = (availability: Availability) => {
-    const matchingLocations = certifiedLocations.filter(
-      (location) => location.timezone === availability.timezone,
-    );
-    if (matchingLocations.length === 0) {
-      return availability.timezone || 'Unassigned timezone';
-    }
-    if (matchingLocations.length === 1) {
-      return `${matchingLocations[0].name} • ${matchingLocations[0].timezone}`;
-    }
-    return `${matchingLocations.map((location) => location.name).join(' / ')} • ${availability.timezone}`;
-  };
-
-  const setExceptionDate = (value: Date | null) => {
-    setAvailabilityExceptionDate(value);
-    if (!value) {
-      setAvailabilityDate('');
-      return;
-    }
-    const year = value.getFullYear();
-    const month = `${value.getMonth() + 1}`.padStart(2, '0');
-    const day = `${value.getDate()}`.padStart(2, '0');
-    setAvailabilityDate(`${year}-${month}-${day}`);
-  };
 
   return (
     <div className="space-y-8 animate-fade-in-up">
