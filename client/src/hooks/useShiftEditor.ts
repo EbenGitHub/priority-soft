@@ -62,6 +62,14 @@ export function useShiftEditor({
 
   const setShiftBuilderStart = useCallback((value: Date | null) => {
     setStartDateTime(value);
+    if (!value) {
+      setEndDateTime(null);
+      return;
+    }
+
+    const nextEnd = new Date(value);
+    nextEnd.setMinutes(nextEnd.getMinutes() + 30);
+    setEndDateTime(nextEnd);
   }, []);
 
   const setShiftBuilderEnd = useCallback((value: Date | null) => {
