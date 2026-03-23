@@ -36,11 +36,16 @@ export interface Shift {
   id: string;
   location: Location;
   date: string; // YYYY-MM-DD
+  endDate?: string | null; // YYYY-MM-DD
   startTime: string; // HH:mm:ss
   endTime: string; // HH:mm:ss
   startUtc?: string;
   endUtc?: string;
   isOvernight?: boolean;
+  skipManagerApproval?: boolean;
+  scheduleGroupId?: string | null;
+  headcountNeeded?: number;
+  slotIndex?: number;
   requiredSkill: Skill; 
   assignedStaff: Staff | null;
   published: boolean;
