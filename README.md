@@ -64,6 +64,10 @@ The reviewer should read:
 - [ASSESSMENT_COVERAGE.md](/Users/mac/per/priority-soft/ASSESSMENT_COVERAGE.md)
   - requirement and scenario coverage status
 
+### Important Limitation
+
+- Password handling is intentionally simplified for the assessment. Demo credentials are not stored with production-grade hashing/encryption because implementation time was focused on scheduling logic, constraint enforcement, realtime workflows, and audit behavior.
+
 ## Supporting Docs
 
 - [BRIEF_DOCUMENTATION.md](/Users/mac/per/priority-soft/BRIEF_DOCUMENTATION.md)

@@ -63,6 +63,7 @@ All seeded demo accounts use the password `password123`.
 - Email notifications are simulated as a user preference and notification type only. There is no separate outbound email log view.
 - Deployment URL is environment-specific and should be filled in when you deploy the frontend and backend.
 - Authentication is still demo-grade. Backend authorization and role checks are enforced, but the app still relies on submitted actor identity rather than a full JWT/session guard stack.
+- Password handling is intentionally simplified for the assessment. Demo credentials are stored without production-grade hashing/encryption because the time was prioritized toward scheduling constraints, workflow logic, realtime updates, and audit behavior.
 - Availability now stores explicit `locationId` plus timezone, but older rows created before that change may still rely on timezone fallback until they are reseeded or edited.
 - The overtime workflow now includes what-if impact in assignment and dashboard views, but there is not yet a dedicated global planner screen for cross-location overtime simulation.
 - Fairness investigation is now manager-readable, but it is currently focused on Saturday-night distribution in the selected location view rather than an arbitrary premium-shift query builder across all locations.
