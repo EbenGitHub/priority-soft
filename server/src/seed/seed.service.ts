@@ -153,7 +153,11 @@ export class SeedService implements OnApplicationBootstrap {
       where: { user: { id: user.id } },
       relations: ['user'],
     });
-    if (existing) return existing;
+    if (existing) {
+      existing.inAppEnabled = inAppEnabled;
+      existing.emailEnabled = emailEnabled;
+      return this.preferenceRepository.save(existing);
+    }
 
     return this.preferenceRepository.save({
       user,
@@ -191,6 +195,7 @@ export class SeedService implements OnApplicationBootstrap {
     location: Location;
     requiredSkill: Skill;
     date: string;
+    endDate?: string | null;
     startTime: string;
     endTime: string;
     assignedStaff?: User | null;
@@ -199,28 +204,53 @@ export class SeedService implements OnApplicationBootstrap {
     scheduleGroupId?: string;
     slotIndex?: number;
   }) {
-    const existing = await this.shiftRepository.findOne({
-      where: {
-        location: { id: data.location.id },
-        date: data.date,
-        startTime: data.startTime,
-        endTime: data.endTime,
-        slotIndex: data.slotIndex || 1,
-      },
-      relations: ['location', 'requiredSkill', 'assignedStaff'],
-    });
-    if (existing) return existing;
-
     const timing = buildShiftUtcRange(
       data.date,
       data.startTime,
       data.endTime,
       data.location.timezone,
+      data.endDate,
     );
+    const existing = await this.shiftRepository
+      .createQueryBuilder('shift')
+      .leftJoinAndSelect('shift.location', 'location')
+      .leftJoinAndSelect('shift.requiredSkill', 'requiredSkill')
+      .leftJoinAndSelect('shift.assignedStaff', 'assignedStaff')
+      .where('location.id = :locationId', { locationId: data.location.id })
+      .andWhere('requiredSkill.id = :requiredSkillId', { requiredSkillId: data.requiredSkill.id })
+      .andWhere('shift.date = :date', { date: data.date })
+      .andWhere('shift.startTime = :startTime', { startTime: data.startTime })
+      .andWhere('shift.endTime = :endTime', { endTime: data.endTime })
+      .andWhere('shift.slotIndex = :slotIndex', { slotIndex: data.slotIndex || 1 })
+      .andWhere(
+        timing.endDate ? 'shift.endDate = :endDate' : 'shift.endDate IS NULL',
+        timing.endDate ? { endDate: timing.endDate } : {},
+      )
+      .getOne();
+
+    if (existing) {
+      existing.location = data.location;
+      existing.requiredSkill = data.requiredSkill;
+      existing.date = data.date;
+      existing.endDate = timing.endDate;
+      existing.startTime = data.startTime;
+      existing.endTime = data.endTime;
+      existing.startUtc = timing.startUtc;
+      existing.endUtc = timing.endUtc;
+      existing.isOvernight = timing.isOvernight;
+      existing.assignedStaff = data.assignedStaff || null;
+      existing.scheduleGroupId = data.scheduleGroupId || existing.scheduleGroupId || randomUUID();
+      existing.headcountNeeded = data.headcountNeeded || 1;
+      existing.slotIndex = data.slotIndex || 1;
+      existing.published = Boolean(data.published);
+      return this.shiftRepository.save(existing);
+    }
+
     return this.shiftRepository.save({
       location: data.location,
       requiredSkill: data.requiredSkill,
       date: data.date,
+      endDate: timing.endDate,
       startTime: data.startTime,
       endTime: data.endTime,
       startUtc: timing.startUtc,
@@ -230,7 +260,7 @@ export class SeedService implements OnApplicationBootstrap {
       scheduleGroupId: data.scheduleGroupId || randomUUID(),
       headcountNeeded: data.headcountNeeded || 1,
       slotIndex: data.slotIndex || 1,
-      published: data.published || false,
+      published: Boolean(data.published),
     });
   }
 
