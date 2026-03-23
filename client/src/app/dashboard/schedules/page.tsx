@@ -441,9 +441,18 @@ export default function SchedulingPage() {
       if (!res.ok) {
         const errData = await res.json();
         if (res.status === 409) {
-          setValidationData({ valid: false, reason: errData.message || 'Concurrent assignment conflict.', suggestions: errData.suggestions || [] });
+          const conflictMessage =
+            errData?.code === 'SIMULTANEOUS_ASSIGNMENT_CONFLICT'
+              ? errData.message ||
+                'Another manager assigned this staff member elsewhere while you were working. Review the updated roster and choose a different candidate.'
+              : errData.message || 'Concurrent assignment conflict.';
+          setValidationData({ valid: false, reason: conflictMessage, suggestions: errData.suggestions || [] });
           await fetchShifts();
-          toast.error(errData.message || 'Concurrent assignment conflict.');
+          toast.error(
+            errData?.code === 'SIMULTANEOUS_ASSIGNMENT_CONFLICT'
+              ? conflictMessage
+              : errData.message || 'Concurrent assignment conflict.',
+          );
           return;
         }
         setValidationData({

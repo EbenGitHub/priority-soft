@@ -840,9 +840,11 @@ export class ShiftsService {
         const existingEnd = existingRange.endUtc.getTime();
 
         if (targetStart < existingEnd && targetEnd > existingStart) {
-          throw new ConflictException(
-            `Concurrent assignment conflict: ${assignedStaff.name} was assigned to another overlapping shift while you were making this change.`,
-          );
+          throw new ConflictException({
+            code: 'SIMULTANEOUS_ASSIGNMENT_CONFLICT',
+            message: `${assignedStaff.name} was just assigned to another overlapping shift by another manager. This assignment was not applied.`,
+            suggestions: await this.buildAlternativeSuggestions(shift, assignedStaff.id),
+          });
         }
       }
 
