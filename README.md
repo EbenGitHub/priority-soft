@@ -2,6 +2,12 @@
 
 ShiftSync is a multi-location staff scheduling platform built for the Priority Soft full-stack assessment.
 
+## Live Links
+
+- Frontend: [https://priority-soft-shift-sync.vercel.app/](https://priority-soft-shift-sync.vercel.app/)
+- Backend API: [https://priority-soft.onrender.com/](https://priority-soft.onrender.com/)
+- Source Code: [https://github.com/EbenGitHub/priority-soft](https://github.com/EbenGitHub/priority-soft)
+
 ## Review Notes
 
 ### Admin Operations

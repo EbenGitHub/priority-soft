@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from 'react';
+import DatePicker from 'react-datepicker';
 import { exportAuditLogsCsv, fetchAuditLogs } from '../../lib/auditApi';
 import { AuditLogRecord } from '../../lib/auditTypes';
 import { exportMockAuditLogsCsv, getMockAuditLogs } from '../../lib/mockAuditLogs';
@@ -22,6 +23,20 @@ type LocationSummary = {
   name: string;
   timezone: string;
 };
+
+function parseDateFilter(value: string): Date | null {
+  if (!value) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateFilter(value: Date | null): string {
+  if (!value) return '';
+  const year = value.getFullYear();
+  const month = `${value.getMonth() + 1}`.padStart(2, '0');
+  const day = `${value.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 export default function AdminDashboard({ user }: { user: UserSummary }) {
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -204,20 +219,34 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
             </div>
             <div>
               <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white"
+              <DatePicker
+                selected={parseDateFilter(startDate)}
+                onChange={(value: Date | null) => setStartDate(formatDateFilter(value))}
+                selectsStart
+                startDate={parseDateFilter(startDate)}
+                endDate={parseDateFilter(endDate)}
+                maxDate={parseDateFilter(endDate) || undefined}
+                dateFormat="MMMM d, yyyy"
+                placeholderText="Choose a start date"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white shadow-inner outline-none transition focus:border-blue-500"
+                calendarClassName="shift-datepicker-calendar"
+                popperClassName="shift-datepicker-popper"
               />
             </div>
             <div>
               <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white"
+              <DatePicker
+                selected={parseDateFilter(endDate)}
+                onChange={(value: Date | null) => setEndDate(formatDateFilter(value))}
+                selectsEnd
+                startDate={parseDateFilter(startDate)}
+                endDate={parseDateFilter(endDate)}
+                minDate={parseDateFilter(startDate) || undefined}
+                dateFormat="MMMM d, yyyy"
+                placeholderText="Choose an end date"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm text-white shadow-inner outline-none transition focus:border-blue-500"
+                calendarClassName="shift-datepicker-calendar"
+                popperClassName="shift-datepicker-popper"
               />
             </div>
           </div>
@@ -228,7 +257,7 @@ export default function AdminDashboard({ user }: { user: UserSummary }) {
             shifts={calendarShifts}
             viewerTimeZone={viewerTimeZone}
             title="Operations Calendar"
-            subtitle="Google Calendar-style overview of upcoming scheduled work across the selected scope."
+            subtitle="Calendar overview of upcoming scheduled work across the selected scope."
             emptyLabel="No scheduled shifts exist for the current filter."
             locationTimeZoneLabel={displayedLocationTimeZone ? `${displayedLocationName} • ${displayedLocationTimeZone}` : undefined}
             layout="stacked"

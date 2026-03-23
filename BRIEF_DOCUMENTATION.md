@@ -1,5 +1,11 @@
 # ShiftSync Brief Documentation
 
+## Live Links
+
+- Frontend: [https://priority-soft-shift-sync.vercel.app/](https://priority-soft-shift-sync.vercel.app/)
+- Backend API: [https://priority-soft.onrender.com/](https://priority-soft.onrender.com/)
+- Source Code: [https://github.com/EbenGitHub/priority-soft](https://github.com/EbenGitHub/priority-soft)
+
 ## Demo Logins
 
 All seeded demo accounts use the password `password123`.
@@ -114,5 +120,8 @@ Available controls:
 
 ## Deployment Notes
 
-- The Next.js frontend can be deployed separately from the Nest backend.
-- The current Nest backend is intended for a standard Node host rather than a Vercel serverless function entrypoint.
+- Frontend deployment: [https://priority-soft-shift-sync.vercel.app/](https://priority-soft-shift-sync.vercel.app/)
+- Backend deployment: [https://priority-soft.onrender.com/](https://priority-soft.onrender.com/)
+- Repository: [https://github.com/EbenGitHub/priority-soft](https://github.com/EbenGitHub/priority-soft)
+- The Next.js frontend is deployed separately from the Nest backend.
+- The Nest backend is intended for a standard Node host rather than a Vercel serverless function entrypoint.
