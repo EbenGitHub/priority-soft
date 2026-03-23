@@ -58,6 +58,98 @@ All seeded demo accounts use the password `password123`.
 - Real-time schedule/notification refresh via websocket events
 - Admin operations page for database reset and targeted reseeding
 
+## Algorithms / Rule Logic
+
+### Fairness distribution
+
+- Premium shifts are defined as Friday and Saturday evening shifts.
+- The fairness view compares premium-shift allocation across staff in the selected scope instead of only looking at total hours.
+- Managers can investigate a specific employee and compare:
+  - that employee's Saturday-night assignment count
+  - the team average
+  - the highest count in the team
+- Desired hours are also compared against assigned hours, but desired hours are treated as a planning target rather than a hard block.
+
+### Overtime and labor checks
+
+- Daily hours:
+  - over 8 hours generates a warning
+  - over 12 hours is a hard block
+- Weekly hours:
+  - 35+ hours generates a warning
+  - 40+ hours is highlighted as overtime exposure
+- Consecutive days:
+  - 6th consecutive day generates a warning
+  - 7th consecutive day requires an explicit override reason
+- Assignment and dashboard views both surface projected overtime impact before final confirmation.
+
+### Assignment validation
+
+- Assignment checks run in this order:
+  - location certification
+  - required skill
+  - matching availability window
+  - overlapping shift detection
+  - 10-hour rest rule
+  - daily-hour compliance
+  - weekly overtime warning
+  - consecutive-day warning / override requirement
+- If validation fails, the UI shows the violated rule directly.
+- Where possible, the backend also returns alternative qualified staff suggestions.
+
+### Availability interpretation
+
+- Availability is attached to an explicit location and therefore to that location's timezone.
+- A recurring window like `9:00 AM - 5:00 PM` means `9:00 AM - 5:00 PM in that selected location's timezone`.
+- Shift matching converts the shift against the availability location timezone, which keeps cross-timezone and DST handling predictable.
+
+### Recurring weekly + one-off exceptions
+
+- Staff can create two kinds of availability:
+  - `Recurring weekly`
+  - `One-off exception`
+- Recurring weekly availability means:
+  - a day of week is selected
+  - a start and end time are selected
+  - the rule repeats every week for that location
+  - example: `Every Monday, 9:00 AM - 5:00 PM at Coastal Eats NYC`
+- One-off exception availability means:
+  - a specific date is selected
+  - a start and end time are selected
+  - the rule applies only on that single calendar date for that location
+  - example: `March 31, 2026, 12:00 PM - 8:00 PM at Coastal Eats LA`
+- The system stores both the selected location and its timezone with the availability record.
+- Matching behavior:
+  - recurring availability is matched by weekday in the availability location's timezone
+  - one-off exception availability is matched only to that exact local date
+  - the shift must fit fully inside the availability window
+- Overnight handling:
+  - if an availability end time is earlier than the start time, it is treated as a window that spills into the next day
+  - the same rule is used for overnight shifts, so late-night / early-morning matching stays consistent
+- DST handling:
+  - recurring availability is interpreted using the stored location timezone rather than the viewer browser timezone
+  - that keeps a rule like `9:00 AM - 5:00 PM` anchored to local restaurant time even when daylight saving changes occur
+- Manager-facing effect:
+  - the assignment modal uses these availability rules during candidate validation
+  - staff who do not match the availability window are shown as unavailable or blocked instead of being treated as clean candidates
+- Duplicate protection:
+  - the backend prevents the same availability window from being added twice for the same user, location, type, and time range
+
+### Publish / cutoff workflow
+
+- Draft schedules can be created and edited freely before the cutoff window.
+- Published schedules become locked inside the configured cutoff window.
+- Inside the cutoff window:
+  - edit, unassign, and unpublish actions require an override reason
+  - the override reason is written to the audit trail
+  - managers/admins are notified when a cutoff override is used
+- Once a shift has already started, it is treated as a hard block rather than an override case.
+
+### Concurrent assignment protection
+
+- Same-staff assignment attempts are serialized with a staff-level database lock.
+- If two managers try to assign the same person at nearly the same time, one wins and the other gets a conflict response after the system rechecks the updated schedule state.
+
 ## Known Limitations
 
 - Email notifications are simulated as a user preference and notification type only. There is no separate outbound email log view.
