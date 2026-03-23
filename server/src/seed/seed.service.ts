@@ -14,6 +14,14 @@ import { AuditLog } from '../audit/entities/audit-log.entity';
 import { Shift } from '../shifts/entities/shift.entity';
 import { SwapRequest } from '../swaps/entities/swap.entity';
 import { buildShiftUtcRange } from '../calendar/calendar-time.util';
+import { randomUUID } from 'crypto';
+import {
+  buildAuditFixtures,
+  buildNotificationFixtures,
+  buildSwapFixtures,
+} from './seed.fixtures';
+
+type SeedContext = Map<string, Promise<any>>;
 
 @Injectable()
 export class SeedService implements OnApplicationBootstrap {
@@ -21,15 +29,22 @@ export class SeedService implements OnApplicationBootstrap {
 
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
-    @InjectRepository(Location) private readonly locationRepository: Repository<Location>,
-    @InjectRepository(Skill) private readonly skillRepository: Repository<Skill>,
-    @InjectRepository(Availability) private readonly availabilityRepository: Repository<Availability>,
-    @InjectRepository(Notification) private readonly notificationRepository: Repository<Notification>,
+    @InjectRepository(Location)
+    private readonly locationRepository: Repository<Location>,
+    @InjectRepository(Skill)
+    private readonly skillRepository: Repository<Skill>,
+    @InjectRepository(Availability)
+    private readonly availabilityRepository: Repository<Availability>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
     @InjectRepository(NotificationPreference)
     private readonly preferenceRepository: Repository<NotificationPreference>,
-    @InjectRepository(AuditLog) private readonly auditRepository: Repository<AuditLog>,
-    @InjectRepository(Shift) private readonly shiftRepository: Repository<Shift>,
-    @InjectRepository(SwapRequest) private readonly swapRepository: Repository<SwapRequest>,
+    @InjectRepository(AuditLog)
+    private readonly auditRepository: Repository<AuditLog>,
+    @InjectRepository(Shift)
+    private readonly shiftRepository: Repository<Shift>,
+    @InjectRepository(SwapRequest)
+    private readonly swapRepository: Repository<SwapRequest>,
   ) {}
 
   private async findOrCreateLocation(name: string, timezone: string) {
@@ -49,7 +64,19 @@ export class SeedService implements OnApplicationBootstrap {
       where: { email: data.email },
       relations: ['locations', 'skills'],
     });
-    if (existing) return existing;
+    if (existing) {
+      existing.name = data.name || existing.name;
+      existing.role = data.role || existing.role;
+      existing.desiredHours = data.desiredHours ?? existing.desiredHours;
+      existing.password = data.password || existing.password || 'password123';
+      if (data.locations?.length) {
+        existing.locations = data.locations;
+      }
+      if (data.skills?.length) {
+        existing.skills = data.skills;
+      }
+      return this.userRepository.save(existing);
+    }
     return this.userRepository.save(this.userRepository.create(data));
   }
 
@@ -160,6 +187,9 @@ export class SeedService implements OnApplicationBootstrap {
     endTime: string;
     assignedStaff?: User | null;
     published?: boolean;
+    headcountNeeded?: number;
+    scheduleGroupId?: string;
+    slotIndex?: number;
   }) {
     const existing = await this.shiftRepository.findOne({
       where: {
@@ -167,12 +197,18 @@ export class SeedService implements OnApplicationBootstrap {
         date: data.date,
         startTime: data.startTime,
         endTime: data.endTime,
+        slotIndex: data.slotIndex || 1,
       },
       relations: ['location', 'requiredSkill', 'assignedStaff'],
     });
     if (existing) return existing;
 
-    const timing = buildShiftUtcRange(data.date, data.startTime, data.endTime, data.location.timezone);
+    const timing = buildShiftUtcRange(
+      data.date,
+      data.startTime,
+      data.endTime,
+      data.location.timezone,
+    );
     return this.shiftRepository.save({
       location: data.location,
       requiredSkill: data.requiredSkill,
@@ -183,6 +219,9 @@ export class SeedService implements OnApplicationBootstrap {
       endUtc: timing.endUtc,
       isOvernight: timing.isOvernight,
       assignedStaff: data.assignedStaff || null,
+      scheduleGroupId: data.scheduleGroupId || randomUUID(),
+      headcountNeeded: data.headcountNeeded || 1,
+      slotIndex: data.slotIndex || 1,
       published: data.published || false,
     });
   }
@@ -226,31 +265,106 @@ export class SeedService implements OnApplicationBootstrap {
     return this.auditRepository.save(data);
   }
 
-  async onApplicationBootstrap() {
-    this.logger.log('Ensuring Coastal Eats demo data exists...');
+  private getSeedContext(context?: SeedContext) {
+    return context || new Map<string, Promise<any>>();
+  }
 
-    // 1. Locations
-    const loc1 = await this.findOrCreateLocation('Coastal Eats - NYC', 'America/New_York');
-    const loc2 = await this.findOrCreateLocation('Coastal Eats - Miami', 'America/New_York');
-    const loc3 = await this.findOrCreateLocation('Coastal Eats - LA', 'America/Los_Angeles');
-    const loc4 = await this.findOrCreateLocation('Coastal Eats - Seattle', 'America/Los_Angeles');
+  private cacheBundle<T>(
+    context: SeedContext,
+    key: string,
+    factory: () => Promise<T>,
+  ) {
+    const cached = context.get(key);
+    if (cached) {
+      return cached as Promise<T>;
+    }
+
+    const promise = factory();
+    context.set(key, promise);
+    return promise;
+  }
+
+  private async ensureCoreReferences() {
+    const loc1 = await this.findOrCreateLocation(
+      'Coastal Eats - NYC',
+      'America/New_York',
+    );
+    const loc2 = await this.findOrCreateLocation(
+      'Coastal Eats - Miami',
+      'America/New_York',
+    );
+    const loc3 = await this.findOrCreateLocation(
+      'Coastal Eats - LA',
+      'America/Los_Angeles',
+    );
+    const loc4 = await this.findOrCreateLocation(
+      'Coastal Eats - Seattle',
+      'America/Los_Angeles',
+    );
     const locations = [loc1, loc2, loc3, loc4];
 
-    // 2. Skills
     const skillBartender = await this.findOrCreateSkill('bartender');
     const skillCook = await this.findOrCreateSkill('line cook');
     const skillServer = await this.findOrCreateSkill('server');
     const skillHost = await this.findOrCreateSkill('host');
 
-    // 3. Admin User
+    return {
+      loc1,
+      loc2,
+      loc3,
+      loc4,
+      locations,
+      skillBartender,
+      skillCook,
+      skillServer,
+      skillHost,
+    };
+  }
+
+  async ensureBootstrapAdmin() {
+    const existingAdmin = await this.userRepository.findOne({
+      where: { role: Role.ADMIN },
+    });
+
+    if (existingAdmin) {
+      this.logger.log('Bootstrap admin already exists. Skipping demo seed on startup.');
+      return existingAdmin;
+    }
+
     const admin = await this.findOrCreateUser({
       name: 'Corporate Admin',
       email: 'admin@coastaleats.com',
       role: Role.ADMIN,
-      locations: locations, // Admins oversee everything
+      password: 'password123',
+      desiredHours: 0,
     });
 
-    // 4. Managers
+    this.logger.log(`Bootstrap admin created: ${admin.email}`);
+    return admin;
+  }
+
+  async seedUsersBundle(context?: SeedContext) {
+    const seedContext = this.getSeedContext(context);
+    return this.cacheBundle(seedContext, 'users', async () => {
+      const {
+      loc1,
+      loc2,
+      loc3,
+      loc4,
+      locations,
+      skillBartender,
+      skillCook,
+      skillServer,
+      skillHost,
+    } = await this.ensureCoreReferences();
+
+    const admin = await this.findOrCreateUser({
+      name: 'Corporate Admin',
+      email: 'admin@coastaleats.com',
+      role: Role.ADMIN,
+      locations: locations,
+    });
+
     const eastManager = await this.findOrCreateUser({
       name: 'East Coast Manager',
       email: 'eastmanager@coastaleats.com',
@@ -265,7 +379,6 @@ export class SeedService implements OnApplicationBootstrap {
       locations: [loc3, loc4],
     });
 
-    // 5. Staff
     const staff1 = await this.findOrCreateUser({
       name: 'Sarah Server',
       email: 'sarah@coastaleats.com',
@@ -302,23 +415,179 @@ export class SeedService implements OnApplicationBootstrap {
       skills: [skillServer, skillHost],
     });
 
-    // 6. Availabilities
-    // Sarah works weekdays, 9am to 5pm
+    const staff5 = await this.findOrCreateUser({
+      name: 'Emma Cross-Coast',
+      email: 'emma@coastaleats.com',
+      role: Role.STAFF,
+      desiredHours: 30,
+      locations: [loc1, loc3],
+      skills: [skillServer, skillBartender],
+    });
+
+    const staff6 = await this.findOrCreateUser({
+      name: 'Leo Closer',
+      email: 'leo@coastaleats.com',
+      role: Role.STAFF,
+      desiredHours: 38,
+      locations: [loc1, loc2],
+      skills: [skillBartender, skillServer],
+    });
+
+    const staff7 = await this.findOrCreateUser({
+      name: 'Priya Prep',
+      email: 'priya@coastaleats.com',
+      role: Role.STAFF,
+      desiredHours: 42,
+      locations: [loc3, loc4],
+      skills: [skillCook],
+    });
+
+    const staff8 = await this.findOrCreateUser({
+      name: 'Ava Host',
+      email: 'ava@coastaleats.com',
+      role: Role.STAFF,
+      desiredHours: 24,
+      locations: [loc2],
+      skills: [skillHost, skillServer],
+    });
+
     for (let day = 1; day <= 5; day++) {
-      await this.ensureRecurringAvailability(staff1, day, '09:00:00', '17:00:00', loc1.timezone);
+      await this.ensureRecurringAvailability(
+        staff1,
+        day,
+        '09:00:00',
+        '17:00:00',
+        loc1.timezone,
+      );
     }
 
     // John works evenings weekends (Fri, Sat, Sun)
     for (const day of [5, 6, 0]) {
-      await this.ensureRecurringAvailability(staff2, day, '16:00:00', '23:59:59', loc3.timezone);
+      await this.ensureRecurringAvailability(
+        staff2,
+        day,
+        '16:00:00',
+        '23:59:59',
+        loc3.timezone,
+      );
     }
 
     // Maria is an exception test: available Dec 31st for a massive shift
-    await this.ensureExceptionAvailability(staff3, '2026-12-31', '10:00:00', '22:00:00', loc1.timezone);
+    await this.ensureExceptionAvailability(
+      staff3,
+      '2026-12-31',
+      '10:00:00',
+      '22:00:00',
+      loc1.timezone,
+    );
 
     for (let day = 1; day <= 5; day++) {
-      await this.ensureRecurringAvailability(staff4, day, '12:00:00', '22:00:00', loc1.timezone);
+      await this.ensureRecurringAvailability(
+        staff4,
+        day,
+        '12:00:00',
+        '22:00:00',
+        loc1.timezone,
+      );
     }
+
+    for (let day = 1; day <= 5; day++) {
+      await this.ensureRecurringAvailability(
+        staff5,
+        day,
+        '09:00:00',
+        '17:00:00',
+        loc1.timezone,
+      );
+    }
+
+    for (const day of [4, 5, 6, 0]) {
+      await this.ensureRecurringAvailability(
+        staff6,
+        day,
+        '16:00:00',
+        '23:59:59',
+        loc2.timezone,
+      );
+    }
+
+    for (const day of [1, 2, 3, 4, 5, 6]) {
+      await this.ensureRecurringAvailability(
+        staff7,
+        day,
+        '14:00:00',
+        '23:00:00',
+        loc3.timezone,
+      );
+    }
+
+    for (const day of [4, 5, 6]) {
+      await this.ensureRecurringAvailability(
+        staff8,
+        day,
+        '10:00:00',
+        '18:00:00',
+        loc2.timezone,
+      );
+    }
+
+    await this.ensureNotificationPreference(admin, true, true);
+    await this.ensureNotificationPreference(eastManager, true, true);
+    await this.ensureNotificationPreference(westManager, true, false);
+    await this.ensureNotificationPreference(staff1, true, false);
+    await this.ensureNotificationPreference(staff2, true, false);
+    await this.ensureNotificationPreference(staff3, true, true);
+    await this.ensureNotificationPreference(staff4, true, false);
+    await this.ensureNotificationPreference(staff5, true, false);
+    await this.ensureNotificationPreference(staff6, true, true);
+    await this.ensureNotificationPreference(staff7, true, false);
+    await this.ensureNotificationPreference(staff8, true, false);
+
+      return {
+      admin,
+      eastManager,
+      westManager,
+      staff1,
+      staff2,
+      staff3,
+      staff4,
+      staff5,
+      staff6,
+      staff7,
+      staff8,
+      loc1,
+      loc2,
+      loc3,
+      loc4,
+      skillBartender,
+      skillCook,
+      skillServer,
+      skillHost,
+      };
+    });
+  }
+
+  async seedShiftsBundle(context?: SeedContext) {
+    const seedContext = this.getSeedContext(context);
+    return this.cacheBundle(seedContext, 'shifts', async () => {
+      const {
+      staff1,
+      staff2,
+      staff3,
+      staff4,
+      staff5,
+      staff6,
+      staff7,
+      staff8,
+      loc1,
+      loc2,
+      loc3,
+      loc4,
+      skillBartender,
+      skillCook,
+      skillServer,
+      skillHost,
+      } = await this.seedUsersBundle(seedContext);
 
     const nycLunch = await this.ensureShift({
       location: loc1,
@@ -392,202 +661,295 @@ export class SeedService implements OnApplicationBootstrap {
       assignedStaff: null,
       published: false,
     });
-
-    await this.ensureNotificationPreference(admin, true, true);
-    await this.ensureNotificationPreference(eastManager, true, true);
-    await this.ensureNotificationPreference(westManager, true, false);
-    await this.ensureNotificationPreference(staff1, true, false);
-    await this.ensureNotificationPreference(staff2, true, false);
-    await this.ensureNotificationPreference(staff3, true, true);
-    await this.ensureNotificationPreference(staff4, true, false);
-
-    await this.ensureNotification({
-      user: staff1,
-      type: 'SHIFT_ASSIGNED',
-      title: 'New shift assigned',
-      message: 'You were assigned to the NYC lunch shift on March 24 from 11:00 to 17:00.',
-      metadata: { emailEnabled: false },
+    const sundayChaosShift = await this.ensureShift({
+      location: loc2,
+      requiredSkill: skillBartender,
+      date: '2026-03-29',
+      startTime: '19:00:00',
+      endTime: '23:00:00',
+      assignedStaff: staff6,
+      published: true,
     });
-    await this.ensureNotification({
-      user: staff1,
-      type: 'SHIFT_UPDATED',
-      title: 'Shift updated',
-      message: 'Your Thursday host coverage was moved to a later start to avoid overlap.',
-      metadata: { emailEnabled: false },
-    });
-    await this.ensureNotification({
-      user: staff1,
-      type: 'SCHEDULE_PUBLISHED',
-      title: 'Schedule published',
-      message: 'Your next weekly schedule has been published for Coastal Eats NYC.',
-      metadata: { emailEnabled: false },
-      readAt: new Date(),
-    });
-    await this.ensureNotification({
-      user: staff3,
-      type: 'SWAP_REQUEST_APPROVED',
-      title: 'Swap approved',
-      message: 'A manager approved your Friday shift adjustment.',
-      metadata: { emailEnabled: true },
-    });
-    await this.ensureNotification({
-      user: staff4,
-      type: 'DROP_REQUEST_OPEN',
-      title: 'Open shift available',
-      message: 'A qualified open shift is available in Miami this Saturday.',
-      metadata: { emailEnabled: false },
-    });
-    await this.ensureNotification({
-      user: eastManager,
-      type: 'SWAP_APPROVAL_REQUIRED',
-      title: 'Swap approval required',
-      message: 'A Friday evening server swap is waiting for manager approval.',
-      metadata: { emailEnabled: true },
-    });
-    await this.ensureNotification({
-      user: eastManager,
-      type: 'AVAILABILITY_CHANGED',
-      title: 'Availability changed',
-      message: 'Noah Flex updated weekday availability at NYC and Miami.',
-      metadata: { emailEnabled: true },
-    });
-    await this.ensureNotification({
-      user: eastManager,
-      type: 'OVERTIME_WARNING',
-      title: 'Projected overtime warning',
-      message: 'Maria Bartender is projected above 35 hours if the Sunday close stays assigned.',
-      metadata: { emailEnabled: true },
-    });
-    await this.ensureNotification({
-      user: westManager,
-      type: 'OVERTIME_WARNING',
-      title: 'Projected overtime warning',
-      message: 'John Cook is approaching 40 hours with the Seattle prep block still assigned.',
-      metadata: { emailEnabled: false },
-    });
-    await this.ensureNotification({
-      user: admin,
-      type: 'OVERTIME_WARNING',
-      title: 'Cross-location overtime alert',
-      message: 'The LA location has two staff members approaching overtime this week.',
-      metadata: { emailEnabled: true },
-    });
-    await this.ensureNotification({
-      user: admin,
-      type: 'SCHEDULE_PUBLISHED',
-      title: 'Schedule published',
-      message: 'East Coast schedules for the week of March 23 have been published.',
-      metadata: { emailEnabled: true },
-    });
-
-    const seededSwap: Partial<SwapRequest> = {
-      type: 'SWAP',
-      status: 'PENDING_MANAGER',
-      reason: 'Need to trade Friday coverage for family travel.',
-      initiatorUser: staff1,
-      initiatorShift: nycLunch,
-      targetShift: nycHostEvening,
-      targetUser: staff4,
-    };
-    const seededDrop: Partial<SwapRequest> = {
-      type: 'DROP',
-      status: 'PENDING_PEER',
-      reason: 'Can no longer make the dinner block.',
-      initiatorUser: staff3,
-      initiatorShift: miamiDinner,
-    };
-
-    await this.ensureSwap(seededSwap);
-    await this.ensureSwap(seededDrop);
-
-    await this.ensureAuditLog({
-      shift: nycFridayClose,
+    const sundayCoverageOption = await this.ensureShift({
       location: loc1,
-      action: 'SHIFT_CREATED',
-      actorId: eastManager.id,
-      actorName: eastManager.name,
-      actorRole: eastManager.role,
-      beforeState: null,
-      afterState: {
-        date: '2026-03-27',
-        startTime: '23:00:00',
-        endTime: '03:00:00',
-        published: false,
-      },
-      summary: 'Created an overnight bartender shift for Friday close.',
+      requiredSkill: skillBartender,
+      date: '2026-03-29',
+      startTime: '12:00:00',
+      endTime: '18:00:00',
+      assignedStaff: staff3,
+      published: true,
     });
-    await this.ensureAuditLog({
-      shift: nycFridayClose,
+    const premiumNycSat = await this.ensureShift({
       location: loc1,
-      action: 'SHIFT_ASSIGNED',
-      actorId: eastManager.id,
-      actorName: eastManager.name,
-      actorRole: eastManager.role,
-      beforeState: { assignedStaffId: null, assignedStaffName: null },
-      afterState: { assignedStaffId: staff3.id, assignedStaffName: staff3.name },
-      summary: 'Assigned Maria Bartender to the overnight closing shift.',
+      requiredSkill: skillBartender,
+      date: '2026-03-28',
+      startTime: '18:00:00',
+      endTime: '23:30:00',
+      assignedStaff: staff3,
+      published: true,
     });
-    await this.ensureAuditLog({
-      shift: nycFridayClose,
+    const premiumMiamiFri = await this.ensureShift({
+      location: loc2,
+      requiredSkill: skillBartender,
+      date: '2026-03-27',
+      startTime: '18:00:00',
+      endTime: '23:30:00',
+      assignedStaff: staff6,
+      published: true,
+    });
+    const crossTimezoneEast = await this.ensureShift({
       location: loc1,
-      action: 'SHIFT_PUBLISHED',
-      actorId: eastManager.id,
-      actorName: eastManager.name,
-      actorRole: eastManager.role,
-      beforeState: { published: false },
-      afterState: { published: true },
-      summary: 'Published a NYC schedule block to staff.',
+      requiredSkill: skillServer,
+      date: '2026-03-31',
+      startTime: '09:00:00',
+      endTime: '17:00:00',
+      assignedStaff: staff5,
+      published: true,
     });
-    await this.ensureAuditLog({
-      shift: nycLunch,
-      location: loc1,
-      action: 'SHIFT_ASSIGNED',
-      actorId: eastManager.id,
-      actorName: eastManager.name,
-      actorRole: eastManager.role,
-      beforeState: { assignedStaffId: null, assignedStaffName: null },
-      afterState: { assignedStaffId: staff1.id, assignedStaffName: staff1.name },
-      summary: 'Assigned Sarah Server to Tuesday lunch coverage.',
-    });
-    await this.ensureAuditLog({
-      shift: laLineClose,
+    const crossTimezoneWest = await this.ensureShift({
       location: loc3,
-      action: 'SHIFT_PUBLISHED',
-      actorId: westManager.id,
-      actorName: westManager.name,
-      actorRole: westManager.role,
-      beforeState: { published: false },
-      afterState: { published: true },
-      summary: 'Published the LA line cook schedule block.',
+      requiredSkill: skillServer,
+      date: '2026-04-01',
+      startTime: '09:00:00',
+      endTime: '17:00:00',
+      assignedStaff: null,
+      published: false,
     });
-    await this.ensureAuditLog({
-      shift: seattleLinePrep,
-      location: loc4,
-      action: 'SHIFT_REASSIGNED',
-      actorId: westManager.id,
-      actorName: westManager.name,
-      actorRole: westManager.role,
-      beforeState: { assignedStaffId: null, assignedStaffName: null },
-      afterState: { assignedStaffId: staff2.id, assignedStaffName: staff2.name },
-      summary: 'Placed John Cook on Seattle evening prep coverage.',
+    const overtimeTrap1 = await this.ensureShift({
+      location: loc3,
+      requiredSkill: skillCook,
+      date: '2026-03-24',
+      startTime: '14:00:00',
+      endTime: '22:00:00',
+      assignedStaff: staff7,
+      published: true,
     });
-    await this.ensureAuditLog({
-      shift: seattleServerOpen,
+    const overtimeTrap2 = await this.ensureShift({
+      location: loc3,
+      requiredSkill: skillCook,
+      date: '2026-03-25',
+      startTime: '14:00:00',
+      endTime: '22:00:00',
+      assignedStaff: staff7,
+      published: true,
+    });
+    const overtimeTrap3 = await this.ensureShift({
+      location: loc3,
+      requiredSkill: skillCook,
+      date: '2026-03-26',
+      startTime: '14:00:00',
+      endTime: '22:00:00',
+      assignedStaff: staff7,
+      published: true,
+    });
+    const overtimeTrap4 = await this.ensureShift({
       location: loc4,
-      action: 'SHIFT_CREATED',
-      actorId: westManager.id,
-      actorName: westManager.name,
-      actorRole: westManager.role,
-      beforeState: null,
-      afterState: {
-        date: seattleServerOpen.date,
-        startTime: seattleServerOpen.startTime,
-        endTime: seattleServerOpen.endTime,
-        assignedStaffId: null,
-      },
-      summary: 'Created an unassigned Seattle server opening shift.',
+      requiredSkill: skillCook,
+      date: '2026-03-27',
+      startTime: '14:00:00',
+      endTime: '22:00:00',
+      assignedStaff: staff7,
+      published: true,
+    });
+    const overtimeTrap5 = await this.ensureShift({
+      location: loc4,
+      requiredSkill: skillCook,
+      date: '2026-03-28',
+      startTime: '14:00:00',
+      endTime: '22:00:00',
+      assignedStaff: staff7,
+      published: true,
+    });
+    const overtimeTrap6 = await this.ensureShift({
+      location: loc4,
+      requiredSkill: skillCook,
+      date: '2026-03-29',
+      startTime: '14:00:00',
+      endTime: '22:00:00',
+      assignedStaff: staff7,
+      published: true,
+    });
+    const fairnessComplaintShift = await this.ensureShift({
+      location: loc2,
+      requiredSkill: skillBartender,
+      date: '2026-04-03',
+      startTime: '18:00:00',
+      endTime: '23:00:00',
+      assignedStaff: staff6,
+      published: false,
     });
 
+      return {
+      nycLunch,
+      nycHostEvening,
+      nycFridayClose,
+      miamiDinner,
+      miamiHost,
+      laLineClose,
+      seattleLinePrep,
+      seattleServerOpen,
+      sundayChaosShift,
+      sundayCoverageOption,
+      premiumNycSat,
+      premiumMiamiFri,
+      crossTimezoneEast,
+      crossTimezoneWest,
+      overtimeTrap1,
+      overtimeTrap2,
+      overtimeTrap3,
+      overtimeTrap4,
+      overtimeTrap5,
+      overtimeTrap6,
+      fairnessComplaintShift,
+      staff1,
+      staff3,
+      staff4,
+      staff5,
+      staff6,
+      staff7,
+      staff8,
+      loc1,
+      loc2,
+      loc3,
+      loc4,
+      };
+    });
+  }
+
+  async seedNotificationsBundle(context?: SeedContext) {
+    const seedContext = this.getSeedContext(context);
+    return this.cacheBundle(seedContext, 'notifications', async () => {
+      const {
+        admin,
+        eastManager,
+        westManager,
+        staff1,
+        staff3,
+        staff4,
+        staff5,
+        staff6,
+        staff7,
+      } = await this.seedUsersBundle(seedContext);
+
+      for (const notification of buildNotificationFixtures({
+        admin,
+        eastManager,
+        westManager,
+        staff1,
+        staff3,
+        staff4,
+        staff5,
+        staff6,
+        staff7,
+      })) {
+        await this.ensureNotification(notification);
+      }
+    });
+  }
+
+  async seedAuditBundle(context?: SeedContext) {
+    const seedContext = this.getSeedContext(context);
+    return this.cacheBundle(seedContext, 'audit', async () => {
+      const {
+      admin,
+      eastManager,
+      westManager,
+      staff1,
+      staff2,
+      staff3,
+      staff4,
+      staff5,
+      staff6,
+      staff7,
+      staff8,
+      nycLunch,
+      nycHostEvening,
+      nycFridayClose,
+      miamiDinner,
+      miamiHost,
+      laLineClose,
+      seattleLinePrep,
+      seattleServerOpen,
+      sundayChaosShift,
+      premiumNycSat,
+      premiumMiamiFri,
+      crossTimezoneEast,
+      crossTimezoneWest,
+      overtimeTrap6,
+      fairnessComplaintShift,
+      loc1,
+      loc2,
+      loc3,
+      loc4,
+    } = {
+      ...(await this.seedUsersBundle(seedContext)),
+      ...(await this.seedShiftsBundle(seedContext)),
+    };
+
+      for (const swap of buildSwapFixtures({
+        staff1,
+        staff3,
+        staff4,
+        staff6,
+        staff8,
+        nycLunch,
+        nycHostEvening,
+        miamiDinner,
+        miamiHost,
+        sundayChaosShift,
+      })) {
+        await this.ensureSwap(swap);
+      }
+
+      for (const auditLog of buildAuditFixtures({
+        admin,
+        eastManager,
+        westManager,
+        staff1,
+        staff2,
+        staff3,
+        staff5,
+        staff6,
+        staff7,
+        nycLunch,
+        nycHostEvening,
+        nycFridayClose,
+        miamiHost,
+        laLineClose,
+        seattleLinePrep,
+        seattleServerOpen,
+        sundayChaosShift,
+        premiumNycSat,
+        premiumMiamiFri,
+        crossTimezoneEast,
+        crossTimezoneWest,
+        overtimeTrap6,
+        fairnessComplaintShift,
+        loc1,
+        loc2,
+        loc3,
+        loc4,
+      })) {
+        await this.ensureAuditLog(auditLog);
+      }
+    });
+  }
+
+  async seedAll() {
+    this.logger.log('Ensuring Coastal Eats demo data exists...');
+    const context = this.getSeedContext();
+    await this.seedUsersBundle(context);
+    this.logger.log('Users seeded successfully...');
+    await this.seedShiftsBundle(context);
+    this.logger.log('Shifts seeded successfully...');
+    await this.seedNotificationsBundle(context);
+    this.logger.log('Notifications seeded successfully...');
+    await this.seedAuditBundle(context);
+    this.logger.log('Audits seeded successfully...');
     this.logger.log('Seed data successfully committed.');
+  }
+
+  async onApplicationBootstrap() {
+    await this.ensureBootstrapAdmin();
   }
 }

@@ -26,5 +26,6 @@ import { SwapRequest } from '../swaps/entities/swap.entity';
     ]),
   ],
   providers: [SeedService],
+  exports: [SeedService],
 })
 export class SeedModule {}
