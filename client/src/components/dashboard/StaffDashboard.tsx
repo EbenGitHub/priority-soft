@@ -17,8 +17,10 @@ import {
   updateAvailability,
   updateDesiredHours,
 } from '../../lib/staffDashboardApi';
+import { useRealtime } from '../../lib/useRealtime';
 import ModalShell from '../ui/ModalShell';
 import ReasonModal from '../ui/ReasonModal';
+import StaffAvailabilityCalendar from '../calendar/StaffAvailabilityCalendar';
 
 export default function StaffDashboard({ user }: { user: any }) {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -36,7 +38,7 @@ export default function StaffDashboard({ user }: { user: any }) {
   const [availabilityExceptionDate, setAvailabilityExceptionDate] = useState<Date | null>(null);
   const [availabilityStartTime, setAvailabilityStartTime] = useState('09:00');
   const [availabilityEndTime, setAvailabilityEndTime] = useState('17:00');
-  const [availabilityTimeZone, setAvailabilityTimeZone] = useState('UTC');
+  const [availabilityLocationId, setAvailabilityLocationId] = useState('');
   const [editingAvailabilityId, setEditingAvailabilityId] = useState<string | null>(null);
   const [deletingAvailabilityId, setDeletingAvailabilityId] = useState<string | null>(null);
 
@@ -49,6 +51,11 @@ export default function StaffDashboard({ user }: { user: any }) {
   const [submittingDrop, setSubmittingDrop] = useState(false);
   const [actingRequestId, setActingRequestId] = useState<string | null>(null);
 
+  useRealtime(() => {
+    fetchLiveState();
+    refreshSwaps();
+  });
+
   const fetchLiveState = async () => {
     try {
       const state = await fetchStaffDashboardState(user.id);
@@ -58,7 +65,7 @@ export default function StaffDashboard({ user }: { user: any }) {
         const me = state.profile;
         setProfile(me);
         setDesiredHours(String(me.desiredHours ?? ''));
-        setAvailabilityTimeZone(me.locations?.[0]?.timezone || viewerTimeZone || 'UTC');
+        setAvailabilityLocationId((current) => current || me.locations?.[0]?.id || '');
       }
     } catch(err) {}
     setLoading(false);
@@ -101,6 +108,13 @@ export default function StaffDashboard({ user }: { user: any }) {
       toast.error('Availability end must be later than the start time.');
       return;
     }
+    const selectedAvailabilityLocation = profile?.locations?.find(
+      (location) => location.id === availabilityLocationId,
+    );
+    if (!selectedAvailabilityLocation) {
+      toast.error('Choose one of your certified locations for this availability window.');
+      return;
+    }
 
     setSavingAvailability(true);
     try {
@@ -108,7 +122,7 @@ export default function StaffDashboard({ user }: { user: any }) {
         type: availabilityType,
         startTime: `${availabilityStartTime}:00`,
         endTime: `${availabilityEndTime}:00`,
-        timezone: availabilityTimeZone || viewerTimeZone,
+        timezone: selectedAvailabilityLocation.timezone || viewerTimeZone,
       };
       if (availabilityType === 'RECURRING') {
         payload.dayOfWeek = Number(availabilityDayOfWeek);
@@ -140,7 +154,11 @@ export default function StaffDashboard({ user }: { user: any }) {
     setAvailabilityDayOfWeek(String(availability.dayOfWeek ?? '1'));
     setAvailabilityStartTime(availability.startTime.slice(0, 5));
     setAvailabilityEndTime(availability.endTime.slice(0, 5));
-    setAvailabilityTimeZone(availability.timezone || viewerTimeZone);
+    const matchingLocation =
+      profile?.locations?.find((location) => location.timezone === availability.timezone) ||
+      profile?.locations?.[0] ||
+      null;
+    setAvailabilityLocationId(matchingLocation?.id || '');
     if (availability.type === 'EXCEPTION' && availability.date) {
       setAvailabilityDate(availability.date);
       setAvailabilityExceptionDate(new Date(`${availability.date}T12:00:00`));
@@ -158,7 +176,7 @@ export default function StaffDashboard({ user }: { user: any }) {
     setAvailabilityExceptionDate(null);
     setAvailabilityStartTime('09:00');
     setAvailabilityEndTime('17:00');
-    setAvailabilityTimeZone(profile?.locations?.[0]?.timezone || viewerTimeZone || 'UTC');
+    setAvailabilityLocationId(profile?.locations?.[0]?.id || '');
   };
 
   const handleDeleteAvailability = async (availabilityId: string) => {
@@ -267,7 +285,20 @@ export default function StaffDashboard({ user }: { user: any }) {
   const incomingSwaps = swaps.filter(s => s.type === 'SWAP' && s.status === 'PENDING_PEER' && s.targetUser?.id === user.id);
   const myUpdates = swaps.filter(s => s.initiatorUser?.id === user.id && ['APPROVED', 'REJECTED', 'CANCELLED'].includes(s.status));
   const availabilityItems = profile?.availabilities || [];
+  const certifiedLocations = profile?.locations || [];
   const weekdayLabels = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const getAvailabilityLocationLabel = (availability: Availability) => {
+    const matchingLocations = certifiedLocations.filter(
+      (location) => location.timezone === availability.timezone,
+    );
+    if (matchingLocations.length === 0) {
+      return availability.timezone || 'Unassigned timezone';
+    }
+    if (matchingLocations.length === 1) {
+      return `${matchingLocations[0].name} • ${matchingLocations[0].timezone}`;
+    }
+    return `${matchingLocations.map((location) => location.name).join(' / ')} • ${availability.timezone}`;
+  };
 
   const setExceptionDate = (value: Date | null) => {
     setAvailabilityExceptionDate(value);
@@ -318,8 +349,22 @@ export default function StaffDashboard({ user }: { user: any }) {
                    </select>
                  </div>
                  <div>
-                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Timezone</label>
-                   <input value={availabilityTimeZone} onChange={(e) => setAvailabilityTimeZone(e.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none" />
+                   <label className="block text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-2">Location</label>
+                   <select
+                     value={availabilityLocationId}
+                     onChange={(e) => setAvailabilityLocationId(e.target.value)}
+                     className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-blue-500 focus:outline-none"
+                   >
+                     {certifiedLocations.length === 0 && <option value="">No certified locations</option>}
+                     {certifiedLocations.map((location) => (
+                       <option key={location.id} value={location.id}>
+                         {location.name} ({location.timezone})
+                       </option>
+                     ))}
+                   </select>
+                   <p className="mt-2 text-xs text-slate-500">
+                     Availability is interpreted in the selected location&apos;s timezone.
+                   </p>
                  </div>
                </div>
 
@@ -358,7 +403,7 @@ export default function StaffDashboard({ user }: { user: any }) {
                </div>
 
                <div className="flex flex-wrap gap-3">
-                 <button type="submit" disabled={savingAvailability || (availabilityType === 'EXCEPTION' && !availabilityDate)} className="rounded-xl border border-blue-500 bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-50">
+                 <button type="submit" disabled={savingAvailability || !availabilityLocationId || (availabilityType === 'EXCEPTION' && !availabilityDate)} className="rounded-xl border border-blue-500 bg-blue-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-500 disabled:opacity-50">
                    {savingAvailability ? 'Saving...' : editingAvailabilityId ? 'Save Availability' : 'Add Availability'}
                  </button>
                  {editingAvailabilityId && (
@@ -386,7 +431,7 @@ export default function StaffDashboard({ user }: { user: any }) {
                              ? `${weekdayLabels[availability.dayOfWeek || 0]}`
                              : availability.date}
                          </p>
-                         <p className="mt-1 text-xs text-slate-400">{availability.startTime.slice(0, 5)} - {availability.endTime.slice(0, 5)} • {availability.timezone}</p>
+                         <p className="mt-1 text-xs text-slate-400">{availability.startTime.slice(0, 5)} - {availability.endTime.slice(0, 5)} • {getAvailabilityLocationLabel(availability)}</p>
                        </div>
                        <div className="flex gap-2">
                          <button
@@ -412,6 +457,13 @@ export default function StaffDashboard({ user }: { user: any }) {
              </div>
           </div>
        </div>
+
+       <StaffAvailabilityCalendar
+         shifts={myShifts}
+         availabilities={availabilityItems}
+         locations={certifiedLocations}
+         viewerTimeZone={viewerTimeZone}
+       />
 
        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
            {/* My Shifts */}

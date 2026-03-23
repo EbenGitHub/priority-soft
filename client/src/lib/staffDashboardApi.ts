@@ -17,7 +17,7 @@ function getApiUrl(path: string) {
 
 export async function fetchStaffDashboardState(userId: string) {
   const [shiftsResponse, usersResponse, meResponse] = await Promise.all([
-    fetch(getApiUrl('/shifts')),
+    fetch(getApiUrl(`/shifts?actorId=${encodeURIComponent(userId)}`)),
     fetch(getApiUrl('/users')),
     fetch(getApiUrl(`/users/${userId}`)),
   ]);

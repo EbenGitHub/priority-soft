@@ -33,6 +33,27 @@ function formatDate(date: Date, timeZone: string) {
   }).format(date);
 }
 
+export function getDateTimePartsInTimeZone(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const valueFor = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || '00';
+
+  return {
+    date: `${valueFor('year')}-${valueFor('month')}-${valueFor('day')}`,
+    time: `${valueFor('hour')}:${valueFor('minute')}:${valueFor('second')}`,
+  };
+}
+
 function getDateParts(date: Date, timeZone: string): DateParts {
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
