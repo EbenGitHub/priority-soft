@@ -102,6 +102,27 @@ export class ShiftsService {
     return suggestions;
   }
 
+  private async buildAssignmentFailure(
+    shift: Shift,
+    excludedUserId: string,
+    baseMessage: string,
+    includeSuggestions = true,
+  ) {
+    const suggestions = includeSuggestions
+      ? await this.buildAlternativeSuggestions(shift, excludedUserId)
+      : [];
+
+    const suggestionMessage =
+      suggestions.length > 0
+        ? ` Suggested alternatives: ${suggestions.map((candidate) => candidate.name).join(', ')}.`
+        : '';
+
+    return new BadRequestException({
+      message: `${baseMessage}${suggestionMessage}`,
+      suggestions,
+    });
+  }
+
   private async acquireStaffAssignmentLock(queryRunner: { query: (query: string, parameters?: any[]) => Promise<any> }, userId: string) {
     await queryRunner.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`assign-staff:${userId}`]);
   }
@@ -365,13 +386,26 @@ export class ShiftsService {
 
   async findAll(actorId?: string) {
     if (actorId) {
-      const actor = await this.userRepo.findOne({ where: { id: actorId } });
+      const actor = await this.userRepo.findOne({ where: { id: actorId }, relations: ['locations'] });
       if (actor?.role === 'STAFF') {
         return this.shiftRepo.find({
           where: { published: true },
           relations: ['requiredSkill', 'assignedStaff', 'location'],
           order: { date: 'ASC', startTime: 'ASC' },
         });
+      }
+      if (actor?.role === 'MANAGER') {
+        const locationIds = actor.locations.map((location) => location.id);
+        if (locationIds.length === 0) return [];
+        return this.shiftRepo
+          .createQueryBuilder('shift')
+          .leftJoinAndSelect('shift.requiredSkill', 'requiredSkill')
+          .leftJoinAndSelect('shift.assignedStaff', 'assignedStaff')
+          .leftJoinAndSelect('shift.location', 'location')
+          .where('location.id IN (:...locationIds)', { locationIds })
+          .orderBy('shift.date', 'ASC')
+          .addOrderBy('shift.startTime', 'ASC')
+          .getMany();
       }
     }
 
@@ -381,7 +415,13 @@ export class ShiftsService {
     });
   }
 
-  async findByLocation(locationId: string) {
+  async findByLocation(locationId: string, actorId?: string) {
+    if (actorId) {
+      const actor = await this.userRepo.findOne({ where: { id: actorId }, relations: ['locations'] });
+      if (actor?.role === 'MANAGER' && !actor.locations.some((location) => location.id === locationId)) {
+        throw new ForbiddenException('You do not have access to this location.');
+      }
+    }
     return this.shiftRepo.find({
       where: { location: { id: locationId } },
       relations: ['requiredSkill', 'assignedStaff', 'location'],
@@ -643,24 +683,35 @@ export class ShiftsService {
   }
 
   async validateAssignment(shift: Shift, userId: string, overrideReason?: string, includeSuggestions = true) {
+    if (!shift.location) {
+      throw new BadRequestException('Shift is missing location context and cannot be validated.');
+    }
+    if (!shift.requiredSkill) {
+      throw new BadRequestException('Shift is missing required skill context and cannot be validated.');
+    }
+
     const staff = await this.userRepo.findOne({
       where: { id: userId },
-      relations: ['locations', 'skills', 'availabilities']
+      relations: ['locations', 'skills', 'availabilities', 'availabilities.location']
     });
     if (!staff) throw new NotFoundException('Staff member not found');
 
     if (!staff.locations.some(l => l.id === shift.location.id)) {
-      throw new BadRequestException({
-        message: 'Staff member is not certified to work at this location.',
-        suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-      });
+      throw await this.buildAssignmentFailure(
+        shift,
+        staff.id,
+        `${staff.name} cannot be assigned because they are not certified for ${shift.location.name}.`,
+        includeSuggestions,
+      );
     }
 
     if (!staff.skills.some(s => s.id === shift.requiredSkill.id)) {
-      throw new BadRequestException({
-        message: 'Missing required specialized skill tag for this shift.',
-        suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-      });
+      throw await this.buildAssignmentFailure(
+        shift,
+        staff.id,
+        `${staff.name} cannot be assigned because this shift requires ${shift.requiredSkill.name} and they do not have that skill.`,
+        includeSuggestions,
+      );
     }
 
     let isAvailable = false;
@@ -671,10 +722,12 @@ export class ShiftsService {
     }
 
     if (!isAvailable) {
-      throw new BadRequestException({
-        message: 'Employee has not explicitly flagged availability for this specific timestamp.',
-        suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-      });
+      throw await this.buildAssignmentFailure(
+        shift,
+        staff.id,
+        `${staff.name} cannot be assigned because they are unavailable for ${shift.date} ${shift.startTime.slice(0, 5)}-${shift.endTime.slice(0, 5)} at ${shift.location.name}.`,
+        includeSuggestions,
+      );
     }
 
     const targetRange = getShiftUtcRange(shift);
@@ -692,26 +745,32 @@ export class ShiftsService {
       const existingEnd = existingRange.endUtc.getTime();
 
       if (targetStart < existingEnd && targetEnd > existingStart) {
-         throw new BadRequestException({
-           message: `Overlaps completely with an existing shift (${existingShift.startTime}-${existingShift.endTime}).`,
-           suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-         });
+         throw await this.buildAssignmentFailure(
+           shift,
+           staff.id,
+           `${staff.name} cannot be assigned because this shift overlaps with another assignment on ${existingShift.date} from ${existingShift.startTime.slice(0, 5)}-${existingShift.endTime.slice(0, 5)}.`,
+           includeSuggestions,
+         );
       }
 
       const hoursBetweenBefore = (targetStart - existingEnd) / (1000 * 60 * 60);
       const hoursBetweenAfter = (existingStart - targetEnd) / (1000 * 60 * 60);
 
       if (targetStart >= existingEnd && hoursBetweenBefore < 10) {
-        throw new BadRequestException({
-          message: `Violates 10-hour rest compliance rule (Only rested ${hoursBetweenBefore.toFixed(1)} hours).`,
-          suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-        });
+        throw await this.buildAssignmentFailure(
+          shift,
+          staff.id,
+          `${staff.name} cannot be assigned because only ${hoursBetweenBefore.toFixed(1)} hours of rest would remain before this shift. The minimum rest rule is 10 hours.`,
+          includeSuggestions,
+        );
       }
       if (targetEnd <= existingStart && hoursBetweenAfter < 10) {
-        throw new BadRequestException({
-          message: `Violates 10-hour rest compliance rule (Next shift cuts rest to ${hoursBetweenAfter.toFixed(1)} hours).`,
-          suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-        });
+        throw await this.buildAssignmentFailure(
+          shift,
+          staff.id,
+          `${staff.name} cannot be assigned because the next scheduled shift would leave only ${hoursBetweenAfter.toFixed(1)} hours of rest. The minimum rest rule is 10 hours.`,
+          includeSuggestions,
+        );
       }
     }
 
@@ -722,10 +781,12 @@ export class ShiftsService {
         .filter((scheduledShift) => getLocalDateKey(getShiftUtcRange(scheduledShift).startUtc, scheduledShift.location?.timezone || shift.location.timezone) === shiftDayKey)
         .reduce((acc, s) => acc + this.getShiftDuration(s), 0) + this.getShiftDuration(shift);
     if (dailyHours > 12) {
-      throw new BadRequestException({
-        message: 'Labor Law Block: Exceeds 12 active hours in a single deployment cycle.',
-        suggestions: includeSuggestions ? await this.buildAlternativeSuggestions(shift, staff.id) : [],
-      });
+      throw await this.buildAssignmentFailure(
+        shift,
+        staff.id,
+        `${staff.name} cannot be assigned because this would push them above the 12-hour daily hard limit.`,
+        includeSuggestions,
+      );
     }
 
     const consecutiveDays = this.calculateConsecutiveDays(allStaffShifts, shift);

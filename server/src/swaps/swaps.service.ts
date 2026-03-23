@@ -9,6 +9,7 @@ import { EventsGateway } from '../events/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthzService } from '../authz/authz.service';
 import { Permission } from '../authz/permissions.enum';
+import { AuditService } from '../audit/audit.service';
 
 type SwapActorPayload = {
   actorId?: string;
@@ -25,6 +26,7 @@ export class SwapsService {
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
     private readonly authzService: AuthzService,
+    private readonly auditService: AuditService,
   ) {}
 
   private async findManagersForLocation(locationId: string) {
@@ -105,7 +107,16 @@ export class SwapsService {
     await this.authzService.assertPermission(userId, Permission.SWAP_RESPOND);
     const req = await this.swapRepo.findOne({
       where: { id },
-      relations: ['initiatorShift', 'initiatorShift.location', 'targetShift', 'targetUser', 'initiatorUser'],
+      relations: [
+        'initiatorShift',
+        'initiatorShift.location',
+        'initiatorShift.requiredSkill',
+        'targetShift',
+        'targetShift.location',
+        'targetShift.requiredSkill',
+        'targetUser',
+        'initiatorUser',
+      ],
     });
     if (!req) throw new BadRequestException('Request sequence not found in memory pools');
     
@@ -198,19 +209,34 @@ export class SwapsService {
     await this.authzService.assertPermission(userId, Permission.SWAP_CANCEL);
     const req = await this.swapRepo.findOne({
       where: { id },
-      relations: ['initiatorUser', 'targetUser'],
+      relations: ['initiatorUser', 'targetUser', 'initiatorShift', 'initiatorShift.location'],
     });
     if (!req) throw new BadRequestException('Request sequence not found in memory pools');
-    if (req.initiatorUser.id !== userId) {
-      throw new BadRequestException('Only the original requester can cancel this workflow.');
-    }
     if (!['PENDING_PEER', 'PENDING_MANAGER'].includes(req.status)) {
       throw new BadRequestException('Only pending swap/drop requests can be cancelled.');
     }
 
+    const isInitiator = req.initiatorUser.id === userId;
+    const isTarget = req.targetUser?.id === userId;
+    const canTargetCancel =
+      req.status === 'PENDING_MANAGER' &&
+      Boolean(isTarget);
+
+    if (!isInitiator && !canTargetCancel) {
+      throw new BadRequestException(
+        'Only the original requester, or the accepting staff member before manager approval, can cancel this workflow.',
+      );
+    }
+
+    const previousStatus = req.status;
     req.status = 'CANCELLED';
     const saved = await this.swapRepo.save(req);
     this.eventsGateway.emitScheduleUpdate();
+
+    const cancellingUserName =
+      req.initiatorUser.id === userId
+        ? req.initiatorUser.name
+        : req.targetUser?.name || 'Staff member';
 
     await this.notificationsService.createForUsers(
       [req.initiatorUser.id, req.targetUser?.id].filter(Boolean) as string[],
@@ -218,10 +244,51 @@ export class SwapsService {
         type: 'SWAP_REQUEST_CANCELLED',
         title: 'Swap request cancelled',
         message:
-          'The original requester cancelled the swap or drop workflow before approval. Original shift assignments remain unchanged.',
-        metadata: { swapId: saved.id },
+          `${cancellingUserName} cancelled the swap or drop workflow before approval. Original shift assignments remain unchanged.`,
+        metadata: { swapId: saved.id, shiftId: req.initiatorShift?.id, locationId: req.initiatorShift?.location?.id },
       },
     );
+
+    if (previousStatus === 'PENDING_MANAGER' && req.initiatorShift?.location?.id) {
+      const managers = await this.findManagersForLocation(req.initiatorShift.location.id);
+      await this.notificationsService.createForUsers(
+        managers.map((manager) => manager.id),
+        {
+          type: 'SWAP_REQUEST_CANCELLED',
+          title: 'Approval workflow cancelled',
+          message: `${cancellingUserName} cancelled a pending swap/drop workflow before manager approval.`,
+          metadata: { swapId: saved.id, shiftId: req.initiatorShift.id, locationId: req.initiatorShift.location.id },
+        },
+      );
+    }
+
+    if (req.initiatorShift?.location) {
+      await this.auditService.logShiftChange({
+        shift: req.initiatorShift,
+        location: req.initiatorShift.location,
+        action: 'SWAP_REQUEST_CANCELLED',
+        actor: {
+          actorId: userId,
+          actorName: cancellingUserName,
+          actorRole: req.initiatorUser.id === userId ? req.initiatorUser.role : req.targetUser?.role || 'STAFF',
+        },
+        beforeState: {
+          swapId: req.id,
+          type: req.type,
+          status: previousStatus,
+          initiatorUserId: req.initiatorUser.id,
+          targetUserId: req.targetUser?.id || null,
+        },
+        afterState: {
+          swapId: saved.id,
+          type: saved.type,
+          status: saved.status,
+          initiatorUserId: saved.initiatorUser.id,
+          targetUserId: saved.targetUser?.id || null,
+        },
+        summary: `${cancellingUserName} cancelled the ${saved.type.toLowerCase()} workflow before manager approval. Original assignments remained unchanged.`,
+      });
+    }
 
     return saved;
   }

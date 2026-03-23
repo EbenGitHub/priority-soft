@@ -7,6 +7,7 @@ import { ShiftsModule } from '../shifts/shifts.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User } from '../users/entities/user.entity';
 import { AuthzModule } from '../authz/authz.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuthzModule } from '../authz/authz.module';
     ShiftsModule,
     NotificationsModule,
     AuthzModule,
+    AuditModule,
   ],
   controllers: [SwapsController],
   providers: [SwapsService]

@@ -9,6 +9,7 @@ import { Permission } from '../authz/permissions.enum';
 import { Location } from '../locations/entities/location.entity';
 import { EventsGateway } from '../events/events.gateway';
 import { AvailabilityType } from './enums/availability-type.enum';
+import { Skill } from './entities/skill.entity';
 
 @Injectable()
 export class UsersService {
@@ -16,6 +17,7 @@ export class UsersService {
     @InjectRepository(User) private readonly userRepository: Repository<User>,
     @InjectRepository(Availability) private readonly availabilityRepository: Repository<Availability>,
     @InjectRepository(Location) private readonly locationRepository: Repository<Location>,
+    @InjectRepository(Skill) private readonly skillRepository: Repository<Skill>,
     private readonly notificationsService: NotificationsService,
     private readonly authzService: AuthzService,
     private readonly eventsGateway: EventsGateway,
@@ -39,13 +41,22 @@ export class UsersService {
     return result;
   }
 
-  findAll() {
-    return this.userRepository.find({ relations: ['locations', 'skills', 'availabilities', 'availabilities.location'] }).then((users) =>
-      users.map((user) => {
+  async findAll(actorId?: string) {
+    let users = await this.userRepository.find({ relations: ['locations', 'skills', 'availabilities', 'availabilities.location'] });
+    if (actorId) {
+      const actor = await this.userRepository.findOne({
+        where: { id: actorId },
+        relations: ['locations'],
+      });
+      if (actor?.role === 'MANAGER') {
+        const allowedLocationIds = new Set(actor.locations.map((location) => location.id));
+        users = users.filter((user) => user.locations?.some((location) => allowedLocationIds.has(location.id)));
+      }
+    }
+    return users.map((user) => {
         const { password, ...result } = user;
         return result;
-      }),
-    );
+      });
   }
 
   async findOne(id: string) {
@@ -59,7 +70,17 @@ export class UsersService {
     return result;
   }
 
-  findByLocation(locationId: string) {
+  async findByLocation(locationId: string, actorId?: string) {
+    if (actorId) {
+      const actor = await this.userRepository.findOne({
+        where: { id: actorId },
+        relations: ['locations'],
+      });
+      if (actor?.role === 'MANAGER' && !actor.locations.some((location) => location.id === locationId)) {
+        throw new ForbiddenException('You do not have access to this location.');
+      }
+    }
+
     return this.userRepository.find({
       where: { locations: { id: locationId } },
       relations: ['locations', 'skills', 'availabilities', 'availabilities.location']
@@ -282,15 +303,32 @@ export class UsersService {
       actorId?: string;
       isActive?: boolean;
       locationIds?: string[];
+      skillIds?: string[];
       desiredHours?: number;
     },
   ) {
-    await this.authzService.assertPermission(data.actorId, Permission.USERS_MANAGE);
+    const actor = await this.authzService.assertPermission(data.actorId, Permission.USERS_MANAGE);
     const user = await this.userRepository.findOne({
       where: { id: userId },
       relations: ['locations', 'skills', 'availabilities', 'availabilities.location'],
     });
     if (!user) throw new NotFoundException('User not found');
+    if (actor.role === 'MANAGER') {
+      if (user.role !== 'STAFF') {
+        throw new ForbiddenException('Managers can only update staff members.');
+      }
+      if (typeof data.isActive === 'boolean') {
+        throw new ForbiddenException('Managers cannot enable or disable accounts.');
+      }
+      const actorLocationIds = new Set(actor.locations.map((location) => location.id));
+      const currentLocationIds = (user.locations || []).map((location) => location.id);
+      if (currentLocationIds.some((locationId) => !actorLocationIds.has(locationId))) {
+        throw new ForbiddenException('You can only manage staff assigned within your locations.');
+      }
+      if (Array.isArray(data.locationIds) && data.locationIds.some((locationId) => !actorLocationIds.has(locationId))) {
+        throw new ForbiddenException('Managers can only certify staff for their own managed locations.');
+      }
+    }
     if (user.role === 'ADMIN' && data.isActive === false) {
       throw new ForbiddenException('Admin accounts cannot be disabled from this control.');
     }
@@ -302,6 +340,13 @@ export class UsersService {
       user.locations = locations;
     }
 
+    if (Array.isArray(data.skillIds)) {
+      const skills = data.skillIds.length
+        ? await this.skillRepository.findBy(data.skillIds.map((id) => ({ id })))
+        : [];
+      user.skills = skills;
+    }
+
     if (typeof data.isActive === 'boolean') {
       user.isActive = data.isActive;
     }
@@ -311,6 +356,7 @@ export class UsersService {
     }
 
     const saved = await this.userRepository.save(user);
+    this.eventsGateway.emitScheduleUpdate();
     if (saved.isActive === false) {
       this.eventsGateway.emitUsersInvalidated([saved.id]);
     }

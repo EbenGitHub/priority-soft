@@ -21,8 +21,8 @@ export class ShiftsController {
   }
 
   @Get('location/:id')
-  findByLocation(@Param('id') locationId: string) {
-    return this.shiftsService.findByLocation(locationId);
+  findByLocation(@Param('id') locationId: string, @Query('actorId') actorId?: string) {
+    return this.shiftsService.findByLocation(locationId, actorId);
   }
 
   @Put(':id/assign')
