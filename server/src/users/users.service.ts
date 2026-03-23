@@ -10,6 +10,7 @@ import { Location } from '../locations/entities/location.entity';
 import { EventsGateway } from '../events/events.gateway';
 import { AvailabilityType } from './enums/availability-type.enum';
 import { Skill } from './entities/skill.entity';
+import { Shift } from '../shifts/entities/shift.entity';
 
 @Injectable()
 export class UsersService {
@@ -18,6 +19,7 @@ export class UsersService {
     @InjectRepository(Availability) private readonly availabilityRepository: Repository<Availability>,
     @InjectRepository(Location) private readonly locationRepository: Repository<Location>,
     @InjectRepository(Skill) private readonly skillRepository: Repository<Skill>,
+    @InjectRepository(Shift) private readonly shiftRepository: Repository<Shift>,
     private readonly notificationsService: NotificationsService,
     private readonly authzService: AuthzService,
     private readonly eventsGateway: EventsGateway,
@@ -84,6 +86,14 @@ export class UsersService {
     return this.userRepository.find({
       where: { locations: { id: locationId } },
       relations: ['locations', 'skills', 'availabilities', 'availabilities.location']
+    });
+  }
+
+  async findAllSkills() {
+    return this.skillRepository.find({
+      order: {
+        name: 'ASC',
+      },
     });
   }
 
@@ -333,6 +343,15 @@ export class UsersService {
       throw new ForbiddenException('Admin accounts cannot be disabled from this control.');
     }
 
+    const nextLocationIds = Array.isArray(data.locationIds)
+      ? new Set(data.locationIds)
+      : new Set((user.locations || []).map((location) => location.id));
+    const nextSkillIds = Array.isArray(data.skillIds)
+      ? new Set(data.skillIds)
+      : new Set((user.skills || []).map((skill) => skill.id));
+
+    await this.assertFutureAssignmentsRemainQualified(user, nextLocationIds, nextSkillIds);
+
     if (Array.isArray(data.locationIds)) {
       const locations = data.locationIds.length
         ? await this.locationRepository.findBy(data.locationIds.map((id) => ({ id })))
@@ -363,5 +382,57 @@ export class UsersService {
 
     const { password, ...result } = saved;
     return result;
+  }
+
+  private async assertFutureAssignmentsRemainQualified(
+    user: User,
+    nextLocationIds: Set<string>,
+    nextSkillIds: Set<string>,
+  ) {
+    const now = new Date();
+    const assignedFutureShifts = await this.shiftRepository.find({
+      where: {
+        assignedStaff: { id: user.id },
+      },
+      relations: ['location', 'requiredSkill', 'assignedStaff'],
+    });
+
+    const impactedShifts = assignedFutureShifts.filter((shift) => {
+      const startsAt =
+        shift.startUtc ||
+        new Date(`${shift.date}T${shift.startTime}`);
+      if (startsAt.getTime() <= now.getTime()) {
+        return false;
+      }
+
+      return (
+        !nextLocationIds.has(shift.location?.id) ||
+        !nextSkillIds.has(shift.requiredSkill?.id)
+      );
+    });
+
+    if (impactedShifts.length === 0) {
+      return;
+    }
+
+    const details = impactedShifts.slice(0, 3).map((shift) => {
+      const problems: string[] = [];
+      if (!nextLocationIds.has(shift.location?.id)) {
+        problems.push(`location certification for ${shift.location?.name}`);
+      }
+      if (!nextSkillIds.has(shift.requiredSkill?.id)) {
+        problems.push(`required skill ${shift.requiredSkill?.name}`);
+      }
+      return `${shift.date} ${shift.startTime.slice(0, 5)} at ${shift.location?.name} (${problems.join(' and ')})`;
+    });
+
+    const extraCount = impactedShifts.length - details.length;
+    throw new BadRequestException(
+      [
+        `${user.name} is already assigned to future shifts that depend on the certification or skill you are removing.`,
+        'Reassign or edit those shifts first.',
+        `Affected shifts: ${details.join('; ')}${extraCount > 0 ? `; and ${extraCount} more` : ''}.`,
+      ].join(' '),
+    );
   }
 }

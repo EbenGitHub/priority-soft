@@ -15,6 +15,11 @@ export class UsersController {
     return this.usersService.findAll(actorId);
   }
 
+  @Get('skills')
+  findAllSkills() {
+    return this.usersService.findAllSkills();
+  }
+
   @Get('location/:locationId')
   findByLocation(@Param('locationId') locationId: string, @Query('actorId') actorId?: string) {
     return this.usersService.findByLocation(locationId, actorId);

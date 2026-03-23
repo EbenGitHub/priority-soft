@@ -8,9 +8,10 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuthzModule } from '../authz/authz.module';
+import { Shift } from '../shifts/entities/shift.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Skill, Availability, Location]), NotificationsModule, AuthzModule],
+  imports: [TypeOrmModule.forFeature([User, Skill, Availability, Location, Shift]), NotificationsModule, AuthzModule],
   providers: [UsersService],
   controllers: [UsersController],
   exports: [TypeOrmModule, UsersService],
