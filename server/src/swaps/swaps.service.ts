@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SwapRequest } from './entities/swap.entity';
@@ -7,6 +7,12 @@ import { User } from '../users/entities/user.entity';
 import { Shift } from '../shifts/entities/shift.entity';
 import { EventsGateway } from '../events/events.gateway';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuthzService } from '../authz/authz.service';
+import { Permission } from '../authz/permissions.enum';
+
+type SwapActorPayload = {
+  actorId?: string;
+};
 
 @Injectable()
 export class SwapsService {
@@ -18,6 +24,7 @@ export class SwapsService {
     private shiftsService: ShiftsService,
     private readonly eventsGateway: EventsGateway,
     private readonly notificationsService: NotificationsService,
+    private readonly authzService: AuthzService,
   ) {}
 
   private async findManagersForLocation(locationId: string) {
@@ -27,6 +34,10 @@ export class SwapsService {
       .where('user.role = :role', { role: 'MANAGER' })
       .andWhere('location.id = :locationId', { locationId })
       .getMany();
+  }
+
+  private async authorizeManagerDecision(locationId: string, actor?: SwapActorPayload) {
+    return this.authzService.assertLocationPermission(actor?.actorId, Permission.SWAP_REVIEW, locationId);
   }
 
   async expireOldDrops() {
@@ -54,6 +65,9 @@ export class SwapsService {
   }
 
   async create(data: { type: 'SWAP'|'DROP'; initiatorUserId: string; initiatorShiftId: string; targetShiftId?: string; targetUserId?: string; reason?: string }) {
+    await this.authzService.assertPermission(data.initiatorUserId, Permission.SWAP_CREATE);
+    const initiatorShift = await this.shiftsService.findOneForWorkflow(data.initiatorShiftId);
+    if (!initiatorShift) throw new BadRequestException('Initiator shift not found.');
     const pendingCount = await this.swapRepo.count({
       where: [
         { initiatorUser: { id: data.initiatorUserId }, status: 'PENDING_PEER' },
@@ -68,6 +82,7 @@ export class SwapsService {
       initiatorUser: { id: data.initiatorUserId } as User,
       initiatorShift: { id: data.initiatorShiftId } as Shift,
       status: 'PENDING_PEER',
+      skipManagerApproval: Boolean(initiatorShift.skipManagerApproval),
       targetShift: data.targetShiftId ? ({ id: data.targetShiftId } as Shift) : null,
       targetUser: data.targetUserId ? ({ id: data.targetUserId } as User) : null
     } as Partial<SwapRequest>);
@@ -87,6 +102,7 @@ export class SwapsService {
   }
 
   async acceptRequest(id: string, userId: string) {
+    await this.authzService.assertPermission(userId, Permission.SWAP_RESPOND);
     const req = await this.swapRepo.findOne({
       where: { id },
       relations: ['initiatorShift', 'initiatorShift.location', 'targetShift', 'targetUser', 'initiatorUser'],
@@ -98,8 +114,33 @@ export class SwapsService {
        req.targetUser = { id: userId } as User;
     } else {
        if (!req.targetUser || !req.targetShift) throw new BadRequestException('Swap request lacks target signature requirements');
+       if (req.targetUser.id !== userId) throw new ForbiddenException('Only the requested staff member can accept this swap.');
        await this.shiftsService.validateAssignment(req.initiatorShift, req.targetUser.id);
        await this.shiftsService.validateAssignment(req.targetShift, req.initiatorUser.id);
+    }
+
+    if (req.skipManagerApproval) {
+      if (req.type === 'DROP') {
+        await this.shiftsService.assignStaffSystem(req.initiatorShift.id, req.targetUser?.id || userId);
+      } else {
+        await this.shiftsService.assignStaffSystem(req.initiatorShift.id, req.targetUser!.id);
+        await this.shiftsService.assignStaffSystem(req.targetShift!.id, req.initiatorUser.id);
+      }
+      req.status = 'APPROVED';
+      const autoApproved = await this.swapRepo.save(req);
+      this.eventsGateway.emitScheduleUpdate();
+
+      await this.notificationsService.createForUsers([req.initiatorUser.id, req.targetUser?.id || userId], {
+        type: 'SWAP_REQUEST_APPROVED',
+        title: 'Shift change auto-approved',
+        message:
+          req.type === 'DROP'
+            ? 'This shift was configured to skip manager approval. Coverage was reassigned as soon as the pickup was accepted.'
+            : 'This shift was configured to skip manager approval. The swap was applied as soon as both staff accepted.',
+        metadata: { swapId: autoApproved.id },
+      });
+
+      return autoApproved;
     }
 
     req.status = 'PENDING_MANAGER';
@@ -133,9 +174,14 @@ export class SwapsService {
     return saved;
   }
 
-  async declineRequest(id: string) {
-    const req = await this.swapRepo.findOne({ where: { id }, relations: ['initiatorUser'] });
+  async declineRequest(id: string, userId: string) {
+    await this.authzService.assertPermission(userId, Permission.SWAP_RESPOND);
+    const req = await this.swapRepo.findOne({ where: { id }, relations: ['initiatorUser', 'targetUser'] });
     if (!req) return null;
+    if (req.type === 'SWAP') {
+      if (!req.targetUser) throw new BadRequestException('Swap target is missing.');
+      if (req.targetUser.id !== userId) throw new ForbiddenException('Only the requested staff member can decline this swap.');
+    }
     req.status = 'REJECTED';
     const saved = await this.swapRepo.save(req);
     this.eventsGateway.emitScheduleUpdate();
@@ -148,17 +194,49 @@ export class SwapsService {
     return saved;
   }
 
-  async approveRequest(id: string) {
-    const req = await this.swapRepo.findOne({ where: { id }, relations: ['initiatorUser', 'targetUser', 'initiatorShift', 'targetShift'] });
+  async cancelRequest(id: string, userId: string) {
+    await this.authzService.assertPermission(userId, Permission.SWAP_CANCEL);
+    const req = await this.swapRepo.findOne({
+      where: { id },
+      relations: ['initiatorUser', 'targetUser'],
+    });
+    if (!req) throw new BadRequestException('Request sequence not found in memory pools');
+    if (req.initiatorUser.id !== userId) {
+      throw new BadRequestException('Only the original requester can cancel this workflow.');
+    }
+    if (!['PENDING_PEER', 'PENDING_MANAGER'].includes(req.status)) {
+      throw new BadRequestException('Only pending swap/drop requests can be cancelled.');
+    }
+
+    req.status = 'CANCELLED';
+    const saved = await this.swapRepo.save(req);
+    this.eventsGateway.emitScheduleUpdate();
+
+    await this.notificationsService.createForUsers(
+      [req.initiatorUser.id, req.targetUser?.id].filter(Boolean) as string[],
+      {
+        type: 'SWAP_REQUEST_CANCELLED',
+        title: 'Swap request cancelled',
+        message: 'The original requester cancelled the swap or drop workflow before approval.',
+        metadata: { swapId: saved.id },
+      },
+    );
+
+    return saved;
+  }
+
+  async approveRequest(id: string, actor?: SwapActorPayload) {
+    const req = await this.swapRepo.findOne({ where: { id }, relations: ['initiatorUser', 'targetUser', 'initiatorShift', 'initiatorShift.location', 'targetShift'] });
     if (!req) throw new BadRequestException('Request signature wiped');
+    await this.authorizeManagerDecision(req.initiatorShift.location.id, actor);
 
     if (req.type === 'DROP') {
        if (!req.targetUser) throw new BadRequestException('Drop target identity void');
-       await this.shiftsService.assignStaff(req.initiatorShift.id, req.targetUser.id);
+       await this.shiftsService.assignStaff(req.initiatorShift.id, req.targetUser.id, undefined, actor);
     } else {
        if (!req.targetUser || !req.targetShift) throw new BadRequestException('Swap constraint signatures void');
-       await this.shiftsService.assignStaff(req.initiatorShift.id, req.targetUser.id);
-       await this.shiftsService.assignStaff(req.targetShift.id, req.initiatorUser.id);
+       await this.shiftsService.assignStaff(req.initiatorShift.id, req.targetUser.id, undefined, actor);
+       await this.shiftsService.assignStaff(req.targetShift.id, req.initiatorUser.id, undefined, actor);
     }
     req.status = 'APPROVED';
     const saved = await this.swapRepo.save(req);
@@ -180,12 +258,13 @@ export class SwapsService {
     return saved;
   }
 
-  async rejectRequest(id: string) {
+  async rejectRequest(id: string, actor?: SwapActorPayload) {
     const req = await this.swapRepo.findOne({
       where: { id },
-      relations: ['initiatorUser', 'targetUser'],
+      relations: ['initiatorUser', 'targetUser', 'initiatorShift', 'initiatorShift.location'],
     });
     if (!req) return null;
+    await this.authorizeManagerDecision(req.initiatorShift.location.id, actor);
     req.status = 'REJECTED';
     const saved = await this.swapRepo.save(req);
     this.eventsGateway.emitScheduleUpdate();

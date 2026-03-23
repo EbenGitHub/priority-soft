@@ -9,9 +9,11 @@ import { ShiftsService } from './shifts.service';
 import { SwapRequest } from '../swaps/entities/swap.entity';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditModule } from '../audit/audit.module';
+import { AuthzModule } from '../authz/authz.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Shift, User, Location, Skill, SwapRequest]), NotificationsModule, AuditModule],
+  imports: [TypeOrmModule.forFeature([Shift, User, Location, Skill, SwapRequest]), NotificationsModule, AuditModule, AuthzModule, SettingsModule],
   controllers: [ShiftsController],
   providers: [ShiftsService],
   exports: [ShiftsService],

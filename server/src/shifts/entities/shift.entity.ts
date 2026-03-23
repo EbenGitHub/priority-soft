@@ -14,6 +14,9 @@ export class Shift {
   @Column({ type: 'date' })
   date: string;
 
+  @Column({ type: 'date', nullable: true })
+  endDate: string | null;
+
   @Column({ type: 'time' })
   startTime: string;
 
@@ -29,11 +32,23 @@ export class Shift {
   @Column({ default: false })
   isOvernight: boolean;
 
+  @Column({ default: false })
+  skipManagerApproval: boolean;
+
   @ManyToOne(() => Skill, { onDelete: 'RESTRICT' })
   requiredSkill: Skill;
 
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
   assignedStaff: User | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  scheduleGroupId: string | null;
+
+  @Column({ type: 'int', default: 1 })
+  headcountNeeded: number;
+
+  @Column({ type: 'int', default: 1 })
+  slotIndex: number;
 
   @Column({ default: false })
   published: boolean;

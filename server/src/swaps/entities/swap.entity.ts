@@ -16,6 +16,9 @@ export class SwapRequest {
   @Column({ type: 'varchar', nullable: true })
   reason: string;
 
+  @Column({ default: false })
+  skipManagerApproval: boolean;
+
   @ManyToOne(() => User)
   @JoinColumn({ name: 'initiatorUserId' })
   initiatorUser: User;

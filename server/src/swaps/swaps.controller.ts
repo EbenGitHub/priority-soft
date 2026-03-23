@@ -21,17 +21,22 @@ export class SwapsController {
   }
 
   @Put(':id/decline')
-  decline(@Param('id') id: string) {
-    return this.swapsService.declineRequest(id);
+  decline(@Param('id') id: string, @Body() body: { userId: string }) {
+    return this.swapsService.declineRequest(id, body.userId);
+  }
+
+  @Put(':id/cancel')
+  cancel(@Param('id') id: string, @Body() body: { userId: string }) {
+    return this.swapsService.cancelRequest(id, body.userId);
   }
 
   @Put(':id/approve')
-  approve(@Param('id') id: string) {
-    return this.swapsService.approveRequest(id);
+  approve(@Param('id') id: string, @Body() body: { actorId?: string }) {
+    return this.swapsService.approveRequest(id, body);
   }
 
   @Put(':id/reject')
-  reject(@Param('id') id: string) {
-    return this.swapsService.rejectRequest(id);
+  reject(@Param('id') id: string, @Body() body: { actorId?: string }) {
+    return this.swapsService.rejectRequest(id, body);
   }
 }
