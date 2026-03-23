@@ -177,12 +177,14 @@ Available controls:
 ## Assumptions / Decisions
 
 - Historical records are preserved. If a staff member is later de-certified from a location, past shifts, notifications, and audit records remain unchanged.
+- Future assignments are protected. If an admin or manager tries to remove a staff member's required skill or location certification while that staff member is still assigned to future shifts that depend on it, the update is blocked until those shifts are reassigned or edited.
 - Desired hours are treated as a planning target for fairness and staffing insight, not as a hard scheduling block.
 - Consecutive-day compliance counts any worked day equally, regardless of whether the shift was short or long.
 - If a swap is edited indirectly because the underlying shift changes, the pending swap/drop request is cancelled and the original assignment remains until a new approved change is made.
 - If a swap is accepted by the peer but not yet manager-approved, the original assignments still remain in force. If the initiator cancels during that window, the workflow is cancelled and nothing changes on the actual schedule.
 - The location timezone is authoritative for shifts. Availability is now anchored to an explicit location and its timezone so recurring availability survives DST transitions predictably and cross-timezone interpretation is explicit.
 - For a location near a timezone boundary, the configured location timezone is treated as the source of truth for scheduling and display.
+- Skills are managed from a shared platform-wide skill catalog seeded by the system. Managers and admins assign skills from that catalog rather than creating ad hoc skill names from the UI.
 
 ## Intentional Ambiguities
 
@@ -190,6 +192,7 @@ Available controls:
 
 - Decision: historical records are preserved.
 - Rationale: past schedules, audit logs, and notifications should remain historically correct even if current certifications change later.
+- Additional future-state rule: if the de-certification or skill removal would invalidate future assigned shifts, the system blocks the change and requires the scheduler to resolve those assignments first.
 
 ### How should "desired hours" interact with availability windows?
 
