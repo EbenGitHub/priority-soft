@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import React, { useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
 import NotificationCenter from '../../components/layout/NotificationCenter';
 
 type SessionUser = {
@@ -18,19 +19,32 @@ type NavItem = {
 };
 
 function buildNav(role: SessionUser['role']): NavItem[] {
-  const base: NavItem[] = [
+  const overviewOnly: NavItem[] = [{ href: '/dashboard', label: 'Overview', description: 'Role dashboard and alerts' }];
+  const managementBase: NavItem[] = [
     { href: '/dashboard', label: 'Overview', description: 'Role dashboard and alerts' },
     { href: '/dashboard/schedules', label: 'Schedules', description: 'Build, assign, and publish shifts' },
   ];
 
-  if (role === 'ADMIN') {
+  if (role === 'STAFF') {
+    return overviewOnly;
+  }
+
+  if (role === 'MANAGER') {
     return [
-      ...base,
-      { href: '/dashboard', label: 'Audit & Export', description: 'Audit trail and location exports' },
+      ...managementBase,
+      { href: '/dashboard/users', label: 'Users', description: 'Staff roster, skills, and certifications' },
     ];
   }
 
-  return base;
+  if (role === 'ADMIN') {
+    return [
+      ...managementBase,
+      { href: '/dashboard/users', label: 'Users', description: 'Managers, staff, and location coverage' },
+      { href: '/dashboard/operations', label: 'Operations', description: 'Admin data reset and seed controls' },
+    ];
+  }
+
+  return overviewOnly;
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -48,6 +62,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setUser(JSON.parse(rawUser) as SessionUser);
   }, [router]);
 
+  useEffect(() => {
+    if (!user) return;
+
+    const apiUrl = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+    const socket = io(apiUrl);
+
+    socket.on('session_invalidated', (payload: { preservedUserIds?: string[] }) => {
+      const preserved = payload?.preservedUserIds || [];
+      const invalidated = (payload as { invalidatedUserIds?: string[] })?.invalidatedUserIds || [];
+      if (invalidated.length > 0 && !invalidated.includes(user.id)) return;
+      if (preserved.includes(user.id)) return;
+      window.localStorage.removeItem('shiftSync_user');
+      router.replace('/');
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [router, user]);
+
   const navItems = useMemo(() => (user ? buildNav(user.role) : []), [user]);
 
   function handleSignOut() {
@@ -57,7 +91,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const currentSection =
     navItems.find((item) => item.href === pathname)?.label ||
-    (pathname === '/dashboard/schedules' ? 'Schedules' : 'Overview');
+    (pathname === '/dashboard/schedules'
+      ? 'Schedules'
+      : pathname === '/dashboard/users'
+        ? 'Users'
+        : pathname === '/dashboard/operations'
+          ? 'Operations'
+          : 'Overview');
 
   if (!user) {
     return (
@@ -70,7 +110,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <div className="flex min-h-screen">
-        <aside className="hidden w-72 shrink-0 border-r border-slate-800 bg-slate-900/95 lg:flex lg:flex-col">
+        <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-slate-800 bg-slate-900/95 lg:flex lg:flex-col">
           <div className="border-b border-slate-800 px-6 py-6">
             <p className="text-xs font-bold uppercase tracking-[0.3em] text-slate-500">Coastal Eats</p>
             <h1 className="mt-2 bg-gradient-to-r from-blue-300 via-cyan-300 to-emerald-300 bg-clip-text text-3xl font-black tracking-tight text-transparent">
@@ -118,7 +158,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </aside>
 
-        <main className="flex min-h-screen flex-1 flex-col">
+        <main className="flex min-h-screen flex-1 flex-col lg:ml-72">
           <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/90 backdrop-blur">
             <div className="flex flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
               <div className="flex items-center justify-between gap-4">
@@ -163,8 +203,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
 
       <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur lg:hidden">
-        <div className="mx-auto grid max-w-3xl grid-cols-3 gap-2">
-          {navItems.slice(0, 2).map((item) => {
+        <div className={`mx-auto grid max-w-3xl gap-2 ${navItems.length >= 3 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+          {navItems.slice(0, 3).map((item) => {
             const active = pathname === item.href;
             return (
               <Link
