@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "react-big-calendar/lib/css/react-big-calendar.css";
+@import "react-datepicker/dist/react-datepicker.css";
 
 :root {
   --background: #ffffff;
@@ -23,4 +25,246 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+button:not(:disabled),
+a[href],
+[role="button"],
+summary,
+select,
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #334155 #020617;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #020617;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid #020617;
+  background: #334155;
+}
+
+.shift-calendar {
+  min-height: 680px;
+  color: #e2e8f0;
+}
+
+.shift-calendar .rbc-toolbar {
+  margin-bottom: 1rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.shift-calendar .rbc-toolbar button {
+  border: 1px solid #334155;
+  background: #020617;
+  color: #cbd5e1;
+  border-radius: 0.9rem;
+  padding: 0.55rem 0.9rem;
+}
+
+.shift-calendar .rbc-toolbar button:hover,
+.shift-calendar .rbc-toolbar button:focus {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.shift-calendar .rbc-toolbar button.rbc-active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #bfdbfe;
+  box-shadow: none;
+}
+
+.shift-calendar .rbc-toolbar-label {
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.shift-calendar .rbc-month-view,
+.shift-calendar .rbc-time-view,
+.shift-calendar .rbc-agenda-view {
+  border-color: #334155;
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.shift-calendar .rbc-header,
+.shift-calendar .rbc-time-header-content,
+.shift-calendar .rbc-timeslot-group,
+.shift-calendar .rbc-time-content,
+.shift-calendar .rbc-month-row + .rbc-month-row,
+.shift-calendar .rbc-day-bg + .rbc-day-bg {
+  border-color: #1e293b;
+}
+
+.shift-calendar .rbc-header,
+.shift-calendar .rbc-time-header,
+.shift-calendar .rbc-agenda-view table thead {
+  background: #020617;
+}
+
+.shift-calendar .rbc-header {
+  padding: 0.75rem 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.shift-calendar .rbc-off-range-bg,
+.shift-calendar .rbc-today {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.shift-calendar .rbc-today {
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.2);
+}
+
+.shift-calendar .rbc-time-slot,
+.shift-calendar .rbc-label,
+.shift-calendar .rbc-agenda-date-cell,
+.shift-calendar .rbc-agenda-time-cell {
+  color: #94a3b8;
+}
+
+.shift-calendar .rbc-event {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.shift-calendar .calendar-event-published,
+.shift-calendar .calendar-event-draft {
+  border-radius: 0.9rem;
+}
+
+.shift-calendar .calendar-event-published > div {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(2, 44, 34, 0.9);
+}
+
+.shift-calendar .calendar-event-draft > div {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(69, 26, 3, 0.9);
+}
+
+.shift-calendar .rbc-agenda-view table {
+  border-color: #334155;
+  background: #020617;
+}
+
+.shift-datepicker-popper {
+  z-index: 60;
+}
+
+.react-datepicker {
+  border: 1px solid #334155;
+  background: #020617;
+  color: #e2e8f0;
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.react-datepicker__month-container,
+.react-datepicker__time-container,
+.react-datepicker__time,
+.react-datepicker__time-box,
+.react-datepicker__time-list {
+  background: #020617;
+}
+
+.react-datepicker__header {
+  background: #0f172a;
+  border-bottom: 1px solid #1e293b;
+}
+
+.react-datepicker__current-month,
+.react-datepicker-time__header,
+.react-datepicker-year-header {
+  color: #ffffff;
+}
+
+.react-datepicker__day-name,
+.react-datepicker__day,
+.react-datepicker__time-name,
+.react-datepicker__time-list-item {
+  color: #cbd5e1;
+}
+
+.react-datepicker__day:hover,
+.react-datepicker__time-list-item:hover {
+  background: rgba(59, 130, 246, 0.18);
+  color: #ffffff;
+}
+
+.react-datepicker__day:not(.react-datepicker__day--disabled),
+.react-datepicker__time-list-item:not(.react-datepicker__time-list-item--disabled),
+.react-datepicker__navigation {
+  cursor: pointer;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__time-list-item--selected,
+.react-datepicker__day--keyboard-selected {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.react-datepicker__time-list-item--selected:hover,
+.react-datepicker__time-list-item--keyboard-selected,
+.react-datepicker__time-list-item:focus-visible {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.react-datepicker__time-container {
+  border-left: 1px solid #1e293b;
+}
+
+.react-datepicker__time-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 2rem;
+  padding-left: 0.9rem;
+  background: #020617;
+  color: #cbd5e1;
+}
+
+.react-datepicker__time-list-item--disabled,
+.react-datepicker__day--disabled {
+  color: #475569;
+}
+
+.react-datepicker__navigation-icon::before {
+  border-color: #cbd5e1;
+}
+
+.react-datepicker__triangle {
+  display: none;
 }
